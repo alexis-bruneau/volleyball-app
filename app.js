@@ -131,7 +131,7 @@ const currentDiv = () => STATE.divisions[STATE.activeTab];
 
 function nextTeamId(div) {
   div.teamIdCounter = (div.teamIdCounter || 0) + 1;
-  return `t${ div.teamIdCounter } `;
+  return `t${div.teamIdCounter}`;
 }
 
 function allQualComplete(div) {
@@ -395,21 +395,36 @@ function renderTeamsPage() {
       const players = team.players || [];
       const maxPlayers = cfg.playerCount;
       
+      const isMyTeam = TEAM_PORTAL && TEAM_PORTAL.teamId === team.id;
+      const canEdit = !TEAM_PORTAL || isMyTeam;
+      
       let rosterHtml = '';
       if (expanded) {
         const slots = [];
         for (let p = 0; p < maxPlayers; p++) {
           const player = players[p];
-          if (player) {
-            slots.push(`<div class="roster-slot filled read-only" > <span class="roster-name">${esc(player)}</span></div> `);
+          if (canEdit) {
+            if (player) {
+              slots.push(`<div class="roster-slot filled" >
+                <span class="roster-name">${esc(player)}</span>
+                <button class="btn btn-ghost btn-xs" data-action="remove-player" data-team-id="${team.id}" data-player-idx="${p}" data-div="${div.id}">✕</button>
+              </div>`);
+            } else {
+              slots.push(`<div class="roster-slot empty" >
+                <input type="text" class="roster-input" id="new-player-${team.id}-${p}" placeholder="Player ${p+1} Name" maxlength="40">
+                <button class="btn btn-primary btn-xs" data-action="add-player" data-team-id="${team.id}" data-player-idx="${p}" data-div="${div.id}">Add</button>
+              </div>`);
+            }
           } else {
-            slots.push(`<div class="roster-slot empty read-only" > <span class="roster-name" style="color:var(--text-muted);font-style:italic;">Open Slot</span></div> `);
+            if (player) {
+              slots.push(`<div class="roster-slot filled read-only" > <span class="roster-name">${esc(player)}</span></div> `);
+            } else {
+              slots.push(`<div class="roster-slot empty read-only" > <span class="roster-name" style="color:var(--text-muted);font-style:italic;">Open Slot</span></div> `);
+            }
           }
         }
         rosterHtml = `<div class="roster-editor" > ${ slots.join('') }</div> `;
       }
-
-      const isMyTeam = TEAM_PORTAL && TEAM_PORTAL.teamId === team.id;
       html += `
     <div class="team-card" ${ isMyTeam ? 'style="border-color:var(--accent);"' : '' }>
       <div class="team-row" style="cursor:pointer;" data-action="toggle-roster" data-team-id="${team.id}" data-div="${div.id}">
@@ -1303,8 +1318,9 @@ function onAppClick(e) {
       break;
 
     case 'delete-team':
+      if (!confirm('Are you sure you want to delete this team?')) return;
       STATE.divisions[divId].teams =
-        STATE.divisions[divId].teams.filter(t => t.id !== btn.dataset.teamId);
+        STATE.divisions[divId].teams.filter(t => t.id.trim() !== btn.dataset.teamId.trim());
       saveState(); renderApp();
       break;
 
