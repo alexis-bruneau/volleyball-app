@@ -434,7 +434,7 @@ function renderTeamsPage() {
           <span class="team-name">${esc(team.name)} ${isMyTeam ? '👁️' : ''}</span>
           <span class="team-roster-count">${players.length}/${maxPlayers}</span>
         </div>
-        <div class="team-btns" onclick="event.stopPropagation()">
+        <div class="team-btns" data-action="noop">
           ${isMyTeam
             ? `<span class="pill pill-ok" style="margin-right:8px;">👁️ Viewing</span>`
             : `<button class="btn btn-ghost btn-sm" style="margin-right:8px;" data-action="login-as-team" data-team-id="${team.id}" data-div="${div.id}">👁️ View As</button>`}
@@ -557,7 +557,7 @@ function renderRegistration(div) {
                        data-team-id="${team.id}" data-div="${div.id}"
                        maxlength="40"
                        onclick="event.stopPropagation()">
-                <div class="team-btns" onclick="event.stopPropagation()">
+                <div class="team-btns" data-action="noop">
                   <button class="btn btn-success btn-sm"
                           data-action="save-edit"
                           data-team-id="${team.id}" data-div="${div.id}">Save</button>
@@ -569,7 +569,7 @@ function renderRegistration(div) {
                   <span class="team-name">${esc(team.name)}</span>
                   <span class="team-roster-count">${players.length}/${maxPlayers}</span>
                 </div>
-                <div class="team-btns" onclick="event.stopPropagation()">
+                <div class="team-btns" data-action="noop">
                   <button class="btn btn-ghost btn-sm"
                           data-action="edit-team"
                           data-team-id="${team.id}" data-div="${div.id}">✏️</button>
@@ -1230,6 +1230,7 @@ function onAppClick(e) {
   if (!btn) return;
 
   const action = btn.dataset.action;
+  if (action === 'noop') return;
   const divId  = btn.dataset.div;
 
   switch (action) {
