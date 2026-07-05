@@ -110,6 +110,7 @@ function loadState() {
       if (!STATE.activePage) STATE.activePage = 'division';
       for (const id in STATE.divisions) {
         const d = STATE.divisions[id];
+        d.id = id;  // Ensure division id is always set after Firebase load
         if (!d.scoringRule)            d.scoringRule = 'winByTwo';
         if (!d.qualifyingRoundsCount)  d.qualifyingRoundsCount = 3;
         if (!d.expandedRosterId)       d.expandedRosterId = null;
@@ -1318,12 +1319,21 @@ function onAppClick(e) {
       renderApp();
       break;
 
-    case 'delete-team':
+    case 'delete-team': {
+      const teamIdToDelete = btn.dataset.teamId;
+      const targetDivId = divId || STATE.activeTab;
       if (!confirm('Are you sure you want to delete this team?')) return;
-      STATE.divisions[divId].teams =
-        STATE.divisions[divId].teams.filter(t => t.id.trim() !== btn.dataset.teamId.trim());
-      saveState(); renderApp();
+      const divData = STATE.divisions[targetDivId];
+      if (divData) {
+        const before = divData.teams.length;
+        divData.teams = divData.teams.filter(t => (t.id || '').trim() !== (teamIdToDelete || '').trim());
+        if (divData.teams.length < before) {
+          toast('Team deleted', 'ok');
+        }
+        saveState(); renderApp();
+      }
       break;
+    }
 
     case 'toggle-roster':
       STATE.divisions[divId].expandedRosterId = 
