@@ -69,6 +69,9 @@ function freshDivision(id) {
 let STATE = {
   activeTab: 'beginner',
   activePage: 'division', // 'division' | 'teams'
+  teamsSubTab: 'teams',   // 'teams' | 'freeAgents'
+  freeAgents: [],
+  freeAgentIdCounter: 0,
   divisions: {
     beginner: freshDivision('beginner'),
     competitive: freshDivision('competitive'),
@@ -108,6 +111,9 @@ function loadState() {
     if (data && data.divisions) {
       STATE = data;
       if (!STATE.activePage) STATE.activePage = 'division';
+      if (!STATE.teamsSubTab) STATE.teamsSubTab = 'teams';
+      if (!STATE.freeAgents) STATE.freeAgents = [];
+      if (!STATE.freeAgentIdCounter) STATE.freeAgentIdCounter = 0;
       for (const id in STATE.divisions) {
         const d = STATE.divisions[id];
         d.id = id;  // Ensure division id is always set after Firebase load
@@ -279,6 +285,9 @@ function renderEntryScreen() {
           <button class="btn btn-secondary" data-action="entry-register-choice" style="padding: 16px; font-size: 16px;">
             📝 Register Team
           </button>
+          <button class="btn btn-secondary" data-action="entry-free-agent" style="padding: 16px; font-size: 16px; background: rgba(255,107,53,0.1); color: var(--accent); border-color: rgba(255,107,53,0.3);">
+            🙋 I'm a Free Agent
+          </button>
           <div class="divider" style="margin: 16px 0;"></div>
           <button class="btn btn-ghost" data-action="entry-organizer" style="padding: 12px; font-size: 15px;">
             ⚙️ Organizer Access
@@ -372,33 +381,70 @@ function renderPhaseContent(div) {
    ========================================================= */
 
 function renderTeamsPage() {
-  let html = `<div class="teams-page-container" >
-    <div class="card" style="margin-bottom:24px;">
-      <div class="card-title">👥 All Teams & Rosters</div>
-      <div class="card-sub">View rosters across all divisions</div>
+  const totalTeams = Object.values(STATE.divisions).reduce((s, d) => s + d.teams.length, 0);
+  const totalFreeAgents = (STATE.freeAgents || []).length;
+  const subTab = STATE.teamsSubTab || 'teams';
+
+  let html = `<div class="teams-page-container">
+    <div class="sub-tabs">
+      <button class="sub-tab ${subTab === 'teams' ? 'active' : ''}" data-action="teams-sub-tab" data-sub="teams">
+        👥 Teams <span class="sub-tab-count">${totalTeams}</span>
+      </button>
+      <button class="sub-tab ${subTab === 'freeAgents' ? 'active' : ''}" data-action="teams-sub-tab" data-sub="freeAgents">
+        🙋 Free Agents <span class="sub-tab-count">${totalFreeAgents}</span>
+      </button>
+    </div>`;
+
+  if (subTab === 'teams') {
+    html += renderTeamsSubTab();
+  } else {
+    html += renderFreeAgentsSubTab();
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function renderTeamsSubTab() {
+  let html = '';
+
+  // Add Team form
+  html += `<div class="teams-add-form">
+    <div class="signup-field">
+      <label>Division</label>
+      <select id="teams-add-div">
+        <option value="beginner" style="background:var(--bg-surface);">🏐 Beginner 4s</option>
+        <option value="competitive" style="background:var(--bg-surface);">⚡ Competitive 2s</option>
+      </select>
     </div>
-  `;
+    <div class="signup-field" style="flex:1;">
+      <label>Team Name</label>
+      <input type="text" id="teams-add-name" placeholder="Enter team name..." maxlength="40">
+    </div>
+    <button class="btn btn-primary btn-sm" data-action="add-team-from-teams" style="padding:9px 18px;">+ Add Team</button>
+  </div>`;
 
   for (const divId in STATE.divisions) {
     const div = STATE.divisions[divId];
     const cfg = DIV_CONFIG[divId];
-    
-    html += `<div class="section-title" > ${ cfg.icon } ${ cfg.name } <span style="font-size:12px;font-weight:400;color:var(--text-muted);">(${div.teams.length})</span></div> `;
-    
+
+    html += `<div class="section-title">${cfg.icon} ${cfg.name} <span style="font-size:12px;font-weight:400;color:var(--text-muted);">(${div.teams.length})</span></div>`;
+
     if (div.teams.length === 0) {
-      html += `<div class="empty-state" style = "margin-bottom:24px;" > <div class="empty-sub">No teams registered yet</div></div> `;
+      html += `<div class="empty-state" style="margin-bottom:24px;"><div class="empty-sub">No teams registered yet</div></div>`;
       continue;
     }
-    
-    html += `<div class="team-list" style = "margin-bottom:32px;" > `;
+
+    html += `<div class="team-list" style="margin-bottom:32px;">`;
     div.teams.forEach((team, i) => {
       const expanded = div.expandedRosterId === team.id;
       const players = team.players || [];
       const maxPlayers = cfg.playerCount;
-      
+      const missing = maxPlayers - players.length;
+
       const isMyTeam = TEAM_PORTAL && TEAM_PORTAL.teamId === team.id;
       const canEdit = !TEAM_PORTAL || isMyTeam;
-      
+
       let rosterHtml = '';
       if (expanded) {
         const slots = [];
@@ -406,37 +452,43 @@ function renderTeamsPage() {
           const player = players[p];
           if (canEdit) {
             if (player) {
-              slots.push(`<div class="roster-slot filled" >
+              slots.push(`<div class="roster-slot filled">
                 <span class="roster-name">${esc(player)}</span>
                 <button class="btn btn-ghost btn-xs" data-action="remove-player" data-team-id="${team.id}" data-player-idx="${p}" data-div="${div.id}">✕</button>
               </div>`);
             } else {
-              slots.push(`<div class="roster-slot empty" >
+              slots.push(`<div class="roster-slot empty">
                 <input type="text" class="roster-input" id="new-player-${team.id}-${p}" placeholder="Player ${p+1} Name" maxlength="40">
                 <button class="btn btn-primary btn-xs" data-action="add-player" data-team-id="${team.id}" data-player-idx="${p}" data-div="${div.id}">Add</button>
               </div>`);
             }
           } else {
             if (player) {
-              slots.push(`<div class="roster-slot filled read-only" > <span class="roster-name">${esc(player)}</span></div> `);
+              slots.push(`<div class="roster-slot filled read-only"><span class="roster-name">${esc(player)}</span></div>`);
             } else {
-              slots.push(`<div class="roster-slot empty read-only" > <span class="roster-name" style="color:var(--text-muted);font-style:italic;">Open Slot</span></div> `);
+              slots.push(`<div class="roster-slot empty read-only"><span class="roster-name" style="color:var(--text-muted);font-style:italic;">Open Slot</span></div>`);
             }
           }
         }
-        rosterHtml = `<div class="roster-editor" > ${ slots.join('') }</div> `;
+        rosterHtml = `<div class="roster-editor">${slots.join('')}</div>`;
       }
+
+      const lookingBadge = missing > 0
+        ? `<span class="looking-for-badge">🔍 Looking for ${missing} player${missing > 1 ? 's' : ''}</span>`
+        : '';
+
       html += `
-    <div class="team-card" ${ isMyTeam ? 'style="border-color:var(--accent);"' : '' }>
+    <div class="team-card" ${isMyTeam ? 'style="border-color:var(--accent);"' : ''}>
       <div class="team-row" style="cursor:pointer;" data-action="toggle-roster" data-team-id="${team.id}" data-div="${div.id}">
         <div class="team-num">${i + 1}</div>
         <div class="team-name-group">
           <span class="team-name">${esc(team.name)} ${isMyTeam ? '👁️' : ''}</span>
           <span class="team-roster-count">${players.length}/${maxPlayers}</span>
+          ${lookingBadge}
         </div>
         <div class="team-btns" data-action="noop">
           ${isMyTeam
-            ? `<span class="pill pill-ok" style="margin-right:8px;">👁️ Viewing</span>`
+            ? '<span class="pill pill-ok" style="margin-right:8px;">👁️ Viewing</span>'
             : `<button class="btn btn-ghost btn-sm" style="margin-right:8px;" data-action="login-as-team" data-team-id="${team.id}" data-div="${div.id}">👁️ View As</button>`}
           <button class="btn btn-danger btn-sm" data-action="delete-team" data-team-id="${team.id}" data-div="${div.id}">✕</button>
           <span style="color:var(--text-sub);font-size:10px;margin-left:8px;">${expanded ? '▲' : '▼'}</span>
@@ -450,6 +502,81 @@ function renderTeamsPage() {
   
   html += `</div> `;
   return html;
+}
+
+function renderFreeAgentsSubTab() {
+  const freeAgents = STATE.freeAgents || [];
+
+  let html = `
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-title">🙋 Free Agents — Looking for a Team</div>
+      <div class="card-sub">Don't have a full team? Sign up here and get matched on tournament day!</div>
+    </div>
+
+    <div class="signup-form">
+      <div class="signup-form-title">Sign Up as Free Agent</div>
+      <div class="signup-row">
+        <div class="signup-field" style="flex:1;">
+          <label>Your Name</label>
+          <input type="text" id="fa-name" placeholder="Enter your name..." maxlength="40">
+        </div>
+        <div class="signup-field">
+          <label>Preferred Format</label>
+          <div class="format-check">
+            <label><input type="checkbox" id="fa-fmt-beginner" value="beginner"> 🏐 Beginner 4s</label>
+            <label><input type="checkbox" id="fa-fmt-competitive" value="competitive"> ⚡ Competitive 2s</label>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-action="add-free-agent" style="padding:9px 18px;">🙋 Sign Me Up</button>
+      </div>
+    </div>`;
+
+  if (freeAgents.length === 0) {
+    html += `<div class="empty-state" style="margin-bottom:24px;">
+      <div class="empty-icon">🙋</div>
+      <div class="empty-title">No free agents yet</div>
+      <div class="empty-sub">Be the first to sign up and find a team!</div>
+    </div>`;
+  } else {
+    const beginnerAgents = freeAgents.filter(fa => (fa.formats || []).includes('beginner'));
+    const competitiveAgents = freeAgents.filter(fa => (fa.formats || []).includes('competitive'));
+
+    html += `<div class="section-title">🏐 Interested in Beginner 4s <span style="font-size:12px;font-weight:400;color:var(--text-muted);">(${beginnerAgents.length})</span></div>`;
+    if (beginnerAgents.length === 0) {
+      html += `<div class="empty-state" style="margin-bottom:20px;padding:16px;"><div class="empty-sub">No one signed up for this format yet</div></div>`;
+    } else {
+      html += '<div class="free-agent-list" style="margin-bottom:24px;">';
+      beginnerAgents.forEach((fa, i) => { html += renderFreeAgentCard(fa, i); });
+      html += '</div>';
+    }
+
+    html += `<div class="section-title">⚡ Interested in Competitive 2s <span style="font-size:12px;font-weight:400;color:var(--text-muted);">(${competitiveAgents.length})</span></div>`;
+    if (competitiveAgents.length === 0) {
+      html += `<div class="empty-state" style="margin-bottom:20px;padding:16px;"><div class="empty-sub">No one signed up for this format yet</div></div>`;
+    } else {
+      html += '<div class="free-agent-list" style="margin-bottom:24px;">';
+      competitiveAgents.forEach((fa, i) => { html += renderFreeAgentCard(fa, i); });
+      html += '</div>';
+    }
+  }
+
+  return html;
+}
+
+function renderFreeAgentCard(fa, idx) {
+  const formats = (fa.formats || []).map(f => {
+    const cfg = DIV_CONFIG[f];
+    return cfg ? `<span class="format-badge ${f}">${cfg.icon} ${cfg.name}</span>` : '';
+  }).join('');
+
+  return `<div class="free-agent-card">
+    <div class="fa-info">
+      <div class="fa-num">${idx + 1}</div>
+      <span class="fa-name">${esc(fa.name)}</span>
+      <div class="fa-formats">${formats}</div>
+    </div>
+    <button class="btn btn-danger btn-xs" data-action="delete-free-agent" data-fa-id="${fa.id}">✕</button>
+  </div>`;
 }
 
 function renderTeamPortalPill() {
@@ -1264,6 +1391,13 @@ function onAppClick(e) {
       renderApp();
       break;
       
+    case 'entry-free-agent':
+      HAS_ENTERED = true;
+      STATE.activePage = 'teams';
+      STATE.teamsSubTab = 'freeAgents';
+      renderApp();
+      break;
+      
     case 'login-as-team':
       const targetTeam = STATE.divisions[divId].teams.find(t => t.id === btn.dataset.teamId);
       if (targetTeam) {
@@ -1286,6 +1420,23 @@ function onAppClick(e) {
     case 'tab-teams':
       STATE.activePage = 'teams';
       saveState(); renderApp();
+      break;
+      
+    case 'teams-sub-tab':
+      STATE.teamsSubTab = btn.dataset.sub;
+      saveState(); renderApp();
+      break;
+      
+    case 'add-team-from-teams':
+      handleAddTeamFromTeams();
+      break;
+      
+    case 'add-free-agent':
+      handleAddFreeAgent();
+      break;
+      
+    case 'delete-free-agent':
+      handleDeleteFreeAgent(btn.dataset.faId);
       break;
       
     case 'team-login':
@@ -1376,6 +1527,73 @@ function onAppClick(e) {
 /* =========================================================
    ACTION HANDLERS
    ========================================================= */
+
+/* ── Free Agents & Teams Page Handlers ── */
+
+function handleAddTeamFromTeams() {
+  const divSelect = document.getElementById('teams-add-div');
+  const nameInput = document.getElementById('teams-add-name');
+  if (!divSelect || !nameInput) return;
+
+  const divId = divSelect.value;
+  const name = nameInput.value.trim();
+  if (!name) { toast('Enter a team name first', 'err'); return; }
+
+  const div = STATE.divisions[divId];
+  if (div.phase !== 'registration') {
+    toast(`Registration is closed for ${DIV_CONFIG[divId].name}.`, 'err');
+    return;
+  }
+  
+  if (div.teams.find(t => t.name.toLowerCase() === name.toLowerCase())) {
+    toast('Team name already exists in this division.', 'err');
+    return;
+  }
+
+  div.teams.push({ id: nextTeamId(div), name, players: [] });
+  saveState(); renderApp();
+  
+  setTimeout(() => { const i = document.getElementById('teams-add-name'); if (i) i.focus(); }, 30);
+  toast(`"${name}" added to ${DIV_CONFIG[divId].name}`, 'ok');
+}
+
+function handleAddFreeAgent() {
+  const nameInput = document.getElementById('fa-name');
+  if (!nameInput) return;
+  const name = nameInput.value.trim();
+  
+  if (!name) { toast('Please enter your name.', 'err'); return; }
+
+  const formats = [];
+  if (document.getElementById('fa-fmt-beginner')?.checked) formats.push('beginner');
+  if (document.getElementById('fa-fmt-competitive')?.checked) formats.push('competitive');
+  
+  if (formats.length === 0) { toast('Select at least one preferred format.', 'err'); return; }
+
+  if (!STATE.freeAgents) STATE.freeAgents = [];
+  if (!STATE.freeAgentIdCounter) STATE.freeAgentIdCounter = 0;
+  
+  STATE.freeAgentIdCounter++;
+  const newFa = {
+    id: `fa_${STATE.freeAgentIdCounter}`,
+    name: name,
+    formats: formats
+  };
+  
+  STATE.freeAgents.push(newFa);
+  saveState(); renderApp();
+  toast('You are signed up as a Free Agent! 🎉', 'ok');
+}
+
+function handleDeleteFreeAgent(faId) {
+  if (!confirm('Are you sure you want to remove this free agent?')) return;
+  
+  if (STATE.freeAgents) {
+    STATE.freeAgents = STATE.freeAgents.filter(fa => fa.id !== faId);
+    saveState(); renderApp();
+    toast('Free agent removed', 'ok');
+  }
+}
 
 /* ── Registration ── */
 
