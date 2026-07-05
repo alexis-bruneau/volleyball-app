@@ -433,11 +433,12 @@ function renderTeamsPage() {
           <span class="team-name">${esc(team.name)} ${isMyTeam ? '👁️' : ''}</span>
           <span class="team-roster-count">${players.length}/${maxPlayers}</span>
         </div>
-        <div class="team-btns">
+        <div class="team-btns" onclick="event.stopPropagation()">
           ${isMyTeam
             ? `<span class="pill pill-ok" style="margin-right:8px;">👁️ Viewing</span>`
-            : `<button class="btn btn-ghost btn-sm" style="margin-right:8px;" onclick="event.stopPropagation()" data-action="login-as-team" data-team-id="${team.id}" data-div="${div.id}">👁️ View As</button>`}
-          <span style="color:var(--text-sub);font-size:10px;margin-right:8px;">${expanded ? '▲' : '▼'}</span>
+            : `<button class="btn btn-ghost btn-sm" style="margin-right:8px;" data-action="login-as-team" data-team-id="${team.id}" data-div="${div.id}">👁️ View As</button>`}
+          <button class="btn btn-danger btn-sm" data-action="delete-team" data-team-id="${team.id}" data-div="${div.id}">✕</button>
+          <span style="color:var(--text-sub);font-size:10px;margin-left:8px;">${expanded ? '▲' : '▼'}</span>
         </div>
       </div>
           ${ rosterHtml }
