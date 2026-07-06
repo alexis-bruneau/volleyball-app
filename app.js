@@ -45,6 +45,7 @@ let ENTRY_MODE = 'start';
 let TEAM_PORTAL = null;
 let IS_ORGANIZER = false;
 let SCORE_DRAFTS = {};
+let REGISTER_DIV_ID = null;
 let db = null;
 let firebaseReady = false;
 
@@ -316,28 +317,61 @@ function renderApp() {
 
 function renderEntry() {
   if (ENTRY_MODE === 'register') {
+    const selectedDiv = REGISTER_DIV_ID ? DIVS[REGISTER_DIV_ID] : null;
+
     return `
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;">
-        <div class="logo" style="margin-bottom:32px;">
-          <span class="logo-icon" style="font-size:48px;">🏐</span>
-          <span class="logo-name" style="font-size:32px;">Tournament Manager</span>
-        </div>
-
-        <div class="card" style="max-width:520px;width:100%;text-align:center;padding:40px 24px;">
-          <h2 style="margin-bottom:24px;">Select Division</h2>
-
-          <div style="display:flex;gap:16px;flex-wrap:wrap;">
-            ${Object.values(DIVS).map((d) => `
-              <button class="btn btn-primary" data-action="entry-register-division" data-div="${d.id}" style="flex:1;padding:20px;min-width:150px;">
-                ${d.icon} ${d.name}
-              </button>
-            `).join('')}
-          </div>
-
-          <button class="btn btn-ghost" data-action="entry-back" style="margin-top:24px;">← Back</button>
-        </div>
+    <div class="entry-screen">
+      <div class="logo entry-logo">
+        <span class="logo-icon" style="font-size:48px;">🏐</span>
+        <span class="logo-name" style="font-size:32px;">Tournament Manager</span>
       </div>
-    `;
+
+      <div class="card entry-card">
+        <h2 style="margin-bottom:10px;">Register Team</h2>
+        <p class="card-sub" style="margin-bottom:24px;">
+          Choose your division, then enter your team name.
+        </p>
+
+        <div class="mobile-division-grid">
+          ${Object.values(DIVS).map((d) => `
+            <button
+              type="button"
+              class="btn ${REGISTER_DIV_ID === d.id ? 'btn-primary' : 'btn-secondary'} division-choice-btn"
+              data-action="select-register-division"
+              data-div="${d.id}"
+            >
+              <span style="font-size:22px;">${d.icon}</span>
+              <span>${d.name}</span>
+            </button>
+          `).join('')}
+        </div>
+
+        <div class="signup-field" style="margin-top:22px;text-align:left;">
+          <label>Team Name</label>
+          <input
+            id="entry-team-name"
+            type="text"
+            placeholder="${selectedDiv ? `Team name for ${selectedDiv.name}` : 'Select a division first'}"
+            maxlength="40"
+            autocomplete="organization"
+            ${selectedDiv ? '' : 'disabled'}
+          >
+        </div>
+
+        <button
+          type="button"
+          class="btn btn-primary btn-xl"
+          data-action="submit-entry-registration"
+          style="width:100%;justify-content:center;margin-top:16px;"
+          ${selectedDiv ? '' : 'disabled'}
+        >
+          Register Team
+        </button>
+
+        <button class="btn btn-ghost" data-action="entry-back" style="margin-top:18px;">← Back</button>
+      </div>
+    </div>
+  `;
   }
 
   return `
@@ -997,8 +1031,24 @@ function handleClick(e) {
 
   if (a === 'entry-register') {
     ENTRY_MODE = 'register';
+    REGISTER_DIV_ID = null;
     renderApp();
     return;
+  }
+
+  if (a === 'select-register-division') {
+    REGISTER_DIV_ID = divId;
+    renderApp();
+
+    setTimeout(() => {
+      $('entry-team-name')?.focus();
+    }, 50);
+
+    return;
+  }
+
+  if (a === 'submit-entry-registration') {
+    return registerTeamFromEntry(REGISTER_DIV_ID);
   }
 
   if (a === 'entry-register-division') return registerTeamFromEntry(divId);
@@ -1080,6 +1130,10 @@ function handleClick(e) {
 function handleKeydown(e) {
   if (e.key !== 'Enter') return;
 
+  if (e.target.id === 'entry-team-name') {
+    registerTeamFromEntry(REGISTER_DIV_ID);
+  }
+
   if (e.target.id === 'new-team-name') {
     addTeam(STATE.activeTab, 'new-team-name');
   }
@@ -1092,7 +1146,6 @@ function handleKeydown(e) {
     addFreeAgent();
   }
 }
-
 function resetAll() {
   if (!admin()) return;
 
@@ -1413,6 +1466,11 @@ function loginAsTeam(divId, teamId) {
 }
 
 function registerTeamFromEntry(divId) {
+  if (!divId || !DIVS[divId]) {
+    toast('Select a division first', 'err');
+    return;
+  }
+
   const d = STATE.divisions[divId];
 
   if (!d) {
@@ -1425,14 +1483,18 @@ function registerTeamFromEntry(divId) {
     return;
   }
 
-  const name = prompt(`Enter your team name for ${DIVS[divId].name}:`);
+  const input = $('entry-team-name');
+  const clean = input ? input.value.trim() : '';
 
-  if (!name || !name.trim()) return;
-
-  const clean = name.trim();
+  if (!clean) {
+    toast('Enter your team name first', 'err');
+    input?.focus();
+    return;
+  }
 
   if (d.teams.some((t) => t.name.toLowerCase() === clean.toLowerCase())) {
     toast('That team already exists', 'err');
+    input?.focus();
     return;
   }
 
@@ -1454,15 +1516,14 @@ function registerTeamFromEntry(divId) {
   IS_ORGANIZER = false;
   HAS_ENTERED = true;
   ENTRY_MODE = 'start';
+  REGISTER_DIV_ID = null;
 
   STATE.activePage = 'division';
   STATE.activeTab = divId;
 
-  // Render immediately so the user leaves the Select Division screen
   renderApp();
   toast(`Registered ${t.name}`, 'ok');
 
-  // Then save to localStorage/Firebase
   saveState();
 }
 

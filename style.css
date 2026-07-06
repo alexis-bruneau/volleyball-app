@@ -1904,3 +1904,84 @@ table.standings tr:hover td {
     gap: 10px;
   }
 }
+
+.entry-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.entry-logo {
+  margin-bottom: 32px;
+}
+
+.entry-card {
+  max-width: 520px;
+  width: 100%;
+  text-align: center;
+  padding: 40px 24px;
+}
+
+.mobile-division-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+
+.division-choice-btn {
+  min-height: 78px;
+  padding: 16px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  white-space: normal;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .entry-screen {
+    justify-content: flex-start;
+    padding: 20px 14px 40px;
+    min-height: 100svh;
+  }
+
+  .entry-logo {
+    margin-top: 20px;
+    margin-bottom: 24px;
+    text-align: center;
+  }
+
+  .entry-logo .logo-name {
+    font-size: 26px !important;
+  }
+
+  .entry-card {
+    padding: 24px 16px;
+    border-radius: 16px;
+  }
+
+  .mobile-division-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .division-choice-btn {
+    min-height: 64px;
+    flex-direction: row;
+    justify-content: flex-start;
+  }
+
+  #entry-team-name {
+    width: 100%;
+    font-size: 16px;
+    padding: 14px 14px;
+  }
+
+  .btn-xl {
+    padding: 15px 20px;
+    font-size: 16px;
+  }
+}
