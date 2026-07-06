@@ -1,53 +1,52 @@
 /* =========================================================
-   app.js — State, localStorage, rendering, events
+   app.js — Volleyball Tournament Manager
+   Refactored button system: one stable delegated click handler.
+   Paste this whole file over your current app.js.
    ========================================================= */
 
 'use strict';
 
-/* ── Constants ──────────────────────────────────────────────── */
-
 const STORAGE_KEY = 'vb_tournament_v2';
+const FIREBASE_PATH = 'tournament_v2';
 
-const DIV_CONFIG = {
-  beginner: { id: 'beginner', name: 'Beginner 4s', icon: '🏐', playerCount: 4 },
-  competitive: { id: 'competitive', name: 'Competitive 2s', icon: '⚡', playerCount: 2 },
+const DIVS = {
+  beginner: { id: 'beginner', name: 'Beginner 4s', icon: '🏐', players: 4 },
+  competitive: { id: 'competitive', name: 'Competitive 2s', icon: '⚡', players: 2 },
 };
-
-const TEST_TEAMS = {
-  beginner: [
-    { name: 'Spikers', players: ['Alex M.', 'Jordan L.', 'Sam K.', 'Riley P.'] },
-    { name: 'Blockers', players: ['Morgan T.', 'Casey R.', 'Jamie O.', 'Drew N.'] },
-    { name: 'Diggers', players: ['Quinn A.', 'Taylor B.', 'Avery C.', 'Blake D.'] },
-    { name: 'Setters', players: ['Parker E.', 'Reese F.', 'Logan G.', 'Harper H.'] },
-    { name: 'Servers', players: ['Charlie I.', 'Finley J.', 'Skyler K.', 'Rowan L.'] },
-    { name: 'Aces', players: ['Dakota M.', 'Emery N.', 'Sage O.', 'River P.'] },
-    { name: 'Liberos', players: ['Phoenix Q.', 'Hayden R.', 'Corey S.', 'Peyton T.'] },
-    { name: 'Smashers', players: ['Remy U.', 'Sloane V.', 'Tatum W.', 'Lennon X.'] },
-  ],
-  competitive: [
-    { name: 'Thunder', players: ['Max A.', 'Zoe B.'] },
-    { name: 'Lightning', players: ['Leo C.', 'Mia D.'] },
-    { name: 'Storm', players: ['Noah E.', 'Emma F.'] },
-    { name: 'Cyclone', players: ['Liam G.', 'Ava H.'] },
-    { name: 'Viper', players: ['Ethan I.', 'Olivia J.'] },
-    { name: 'Cobra', players: ['Lucas K.', 'Sophia L.'] },
-    { name: 'Eagle', players: ['Mason M.', 'Isabella N.'] },
-    { name: 'Falcon', players: ['Elijah O.', 'Charlotte P.'] },
-  ],
-};
-
-/* Active team portal state (session only — not persisted) */
-let TEAM_PORTAL = null; // null = admin mode | { teamId, divId } = team view mode
-let HAS_ENTERED = false;
 
 const PHASES = ['registration', 'qualifying', 'playoffs', 'complete'];
-const PHASE_LABELS = { registration: 'Registration', qualifying: 'Qualifying', playoffs: 'Playoffs', complete: 'Complete' };
-const PHASE_ICONS = { registration: '📋', qualifying: '🏅', playoffs: '🏆', complete: '🎉' };
 
-const MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
-const PLACE_NAMES = ['1st Place', '2nd Place', '3rd Place', '4th Place', '5th Place', '6th Place', '7th Place', '8th Place'];
 
-/* ── State ──────────────────────────────────────────────────── */
+
+const firebaseConfig = {
+  apiKey: 'AIzaSyDohCPIyQDOuoLPjoqVQpwSJPimdvAvNss',
+  authDomain: 'volleyball-tournament-baadf.firebaseapp.com',
+  projectId: 'volleyball-tournament-baadf',
+  storageBucket: 'volleyball-tournament-baadf.firebasestorage.app',
+  messagingSenderId: '1054100658212',
+  appId: '1:1054100658212:web:2e6d06609217b046cbe0b1',
+  databaseURL: 'https://volleyball-tournament-baadf-default-rtdb.firebaseio.com',
+};
+
+let STATE = {
+  activeTab: 'beginner',
+  activePage: 'division',
+  teamsSubTab: 'teams',
+  freeAgents: [],
+  freeAgentIdCounter: 0,
+  divisions: {
+    beginner: freshDivision('beginner'),
+    competitive: freshDivision('competitive'),
+  },
+};
+
+let HAS_ENTERED = false;
+let ENTRY_MODE = 'start';
+let TEAM_PORTAL = null;
+let IS_ORGANIZER = false;
+let SCORE_DRAFTS = {};
+let db = null;
+let firebaseReady = false;
 
 function freshDivision(id) {
   return {
@@ -60,1766 +59,1584 @@ function freshDivision(id) {
     bracket: null,
     finalRankings: [],
     teamIdCounter: 0,
-    editingTeamId: null,
-    expandedRosterId: null,   // which team roster is open in registration
-    scoringRule: 'winByTwo',
+    expandedTeamId: null,
   };
 }
 
-let STATE = {
-  activeTab: 'beginner',
-  activePage: 'division', // 'division' | 'teams'
-  teamsSubTab: 'teams',   // 'teams' | 'freeAgents'
-  freeAgents: [],
-  freeAgentIdCounter: 0,
-  divisions: {
-    beginner: freshDivision('beginner'),
-    competitive: freshDivision('competitive'),
-  },
-};
-
-/* ── Firebase / State Management ──────────────────────────────── */
-
-const firebaseConfig = {
-  apiKey: "AIzaSyDohCPIyQDOuoLPjoqVQpwSJPimdvAvNss",
-  authDomain: "volleyball-tournament-baadf.firebaseapp.com",
-  projectId: "volleyball-tournament-baadf",
-  storageBucket: "volleyball-tournament-baadf.firebasestorage.app",
-  messagingSenderId: "1054100658212",
-  appId: "1:1054100658212:web:2e6d06609217b046cbe0b1"
-};
-
-// Fallback for databaseURL if missing from config snippet
-if (!firebaseConfig.databaseURL) {
-  firebaseConfig.databaseURL = `https://${firebaseConfig.projectId}-default-rtdb.firebaseio.com`;
+function $(id) {
+  return document.getElementById(id);
 }
 
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
-
-function saveState() {
-  try {
-    db.ref('tournament_v2').set(STATE);
-  } catch (e) { 
-    console.warn('Firebase save failed:', e); 
-  }
+function div() {
+  return STATE.divisions[STATE.activeTab];
 }
 
-function loadState() {
-  db.ref('tournament_v2').on('value', (snapshot) => {
-    const data = snapshot.val();
-    if (data && data.divisions) {
-      STATE = data;
-      if (!STATE.activePage) STATE.activePage = 'division';
-      if (!STATE.teamsSubTab) STATE.teamsSubTab = 'teams';
-      if (!STATE.freeAgents) STATE.freeAgents = [];
-      if (!STATE.freeAgentIdCounter) STATE.freeAgentIdCounter = 0;
-      for (const id in STATE.divisions) {
-        const d = STATE.divisions[id];
-        d.id = id;  // Ensure division id is always set after Firebase load
-        if (!d.scoringRule)            d.scoringRule = 'winByTwo';
-        if (!d.qualifyingRoundsCount)  d.qualifyingRoundsCount = 3;
-        if (!d.expandedRosterId)       d.expandedRosterId = null;
-        // Back-compat: ensure all teams have a players array
-        d.teams = (d.teams || []).map(t => ({ players: [], ...t }));
-      }
-    } else {
-      // Database is empty, initialize it with local fresh STATE
-      saveState();
-    }
-    // Re-render whenever state updates from cloud
-    renderApp();
-  });
+function admin() {
+  return IS_ORGANIZER === true;
 }
 
-/* ── Helpers ────────────────────────────────────────────────── */
-
-const currentDiv = () => STATE.divisions[STATE.activeTab];
-
-function nextTeamId(div) {
-  div.teamIdCounter = (div.teamIdCounter || 0) + 1;
-  return `t${div.teamIdCounter}`;
+function canEnterScores() {
+  return HAS_ENTERED === true;
 }
 
-function allQualComplete(div) {
-  return div.qualifyingRounds.length > 0 &&
-    div.qualifyingRounds.every(r => r.games.every(g => g.complete));
+function canManageTeam(divId, teamId) {
+  return admin() || (
+    TEAM_PORTAL &&
+    TEAM_PORTAL.divId === divId &&
+    String(TEAM_PORTAL.teamId) === String(teamId)
+  );
 }
 
-function esc(str) {
-  return String(str ?? '')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function esc(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
-
-function getSeed(team, standings) {
-  if (!team || !standings) return null;
-  const i = standings.findIndex(s => s.team.id === team.id);
-  return i >= 0 ? i + 1 : null;
-}
-
-/* ── Toast ──────────────────────────────────────────────────── */
 
 function toast(msg, type = 'info') {
-  const c  = document.getElementById('toast-container');
-  if (!c) return;
+  const box = $('toast-container');
+  if (!box) {
+    console.log(msg);
+    return;
+  }
+
   const el = document.createElement('div');
-  el.className = `toast ${ type } `;
+  el.className = `toast ${type}`;
   el.textContent = msg;
-  c.appendChild(el);
+  box.appendChild(el);
+
   setTimeout(() => {
     el.style.animation = 'toastOut .3s ease forwards';
     setTimeout(() => el.remove(), 300);
-  }, 3200);
+  }, 3000);
 }
 
+function normalizeState() {
+  if (!STATE || typeof STATE !== 'object') STATE = {};
+  if (!STATE.divisions) STATE.divisions = {};
 
+  Object.keys(DIVS).forEach((id) => {
+    const d = { ...freshDivision(id), ...(STATE.divisions[id] || {}), id };
 
-/* =========================================================
-   RENDER ENGINE
-   ========================================================= */
+    d.teams = Array.isArray(d.teams) ? d.teams : [];
+    d.teams = d.teams.map((t, i) => ({
+      id: t.id || `t${i + 1}`,
+      name: t.name || `Team ${i + 1}`,
+      players: Array.isArray(t.players) ? t.players.filter(Boolean) : [],
+    }));
 
-let ENTRY_MODE = 'start'; // 'start' | 'register_choice'
+    d.phase = PHASES.includes(d.phase) ? d.phase : 'registration';
+    d.qualifyingRoundsCount = Number(d.qualifyingRoundsCount || 3);
+    d.qualifyingRounds = Array.isArray(d.qualifyingRounds) ? d.qualifyingRounds : [];
+    d.standings = Array.isArray(d.standings) ? d.standings : [];
+    d.finalRankings = Array.isArray(d.finalRankings) ? d.finalRankings : [];
+    d.teamIdCounter = Math.max(
+      Number(d.teamIdCounter || 0),
+      ...d.teams.map((t) => Number(String(t.id).replace('t', '')) || 0),
+    );
 
-function renderApp() {
-  if (!HAS_ENTERED) {
-    document.getElementById('app').innerHTML = renderEntryScreen();
-    bindEvents();
+    STATE.divisions[id] = d;
+  });
+
+  STATE.activeTab = STATE.divisions[STATE.activeTab] ? STATE.activeTab : 'beginner';
+  STATE.activePage = ['division', 'teams'].includes(STATE.activePage) ? STATE.activePage : 'division';
+  STATE.teamsSubTab = ['teams', 'freeAgents'].includes(STATE.teamsSubTab) ? STATE.teamsSubTab : 'teams';
+
+  STATE.freeAgents = Array.isArray(STATE.freeAgents) ? STATE.freeAgents : [];
+  STATE.freeAgents = STATE.freeAgents.map((fa, i) => ({
+    id: fa.id || `fa_${i + 1}`,
+    name: fa.name || `Free Agent ${i + 1}`,
+    formats: Array.isArray(fa.formats) ? fa.formats.filter((f) => DIVS[f]) : [],
+  }));
+
+  STATE.freeAgentIdCounter = Math.max(
+    Number(STATE.freeAgentIdCounter || 0),
+    ...STATE.freeAgents.map((fa) => Number(String(fa.id).replace('fa_', '')) || 0),
+  );
+}
+
+function persistableState() {
+  return {
+    divisions: STATE.divisions,
+    freeAgents: STATE.freeAgents,
+    freeAgentIdCounter: STATE.freeAgentIdCounter,
+  };
+}
+
+function applyLoadedState(data) {
+  if (!data || typeof data !== 'object') return;
+
+  const localUi = {
+    activeTab: STATE.activeTab,
+    activePage: STATE.activePage,
+    teamsSubTab: STATE.teamsSubTab,
+  };
+
+  STATE = {
+    ...STATE,
+    divisions: data.divisions || STATE.divisions,
+    freeAgents: Array.isArray(data.freeAgents) ? data.freeAgents : STATE.freeAgents,
+    freeAgentIdCounter: data.freeAgentIdCounter ?? STATE.freeAgentIdCounter,
+    ...localUi,
+  };
+
+  normalizeState();
+}
+
+function saveLocal() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistableState()));
+  } catch (e) {
+    console.warn('localStorage save failed', e);
+  }
+}
+
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    applyLoadedState(JSON.parse(raw));
+    return true;
+  } catch (e) {
+    console.warn('localStorage load failed', e);
+    return false;
+  }
+}
+
+function initFirebase() {
+  try {
+    if (!window.firebase || !firebase.apps) return;
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+    firebaseReady = true;
+  } catch (e) {
+    console.warn('Firebase unavailable; using localStorage only', e);
+  }
+}
+
+function saveState() {
+  normalizeState();
+  saveLocal();
+
+  if (!firebaseReady || !db) return Promise.resolve();
+
+  return db.ref(FIREBASE_PATH).set(persistableState()).catch((e) => {
+    console.warn('Firebase save failed', e);
+    toast('Saved locally, but Firebase save failed. Check database rules / URL.', 'err');
+  });
+}
+
+function loadState() {
+  normalizeState();
+  loadLocal();
+
+  if (!firebaseReady || !db) {
+    renderApp();
     return;
   }
-  
-  // -- Capture dirty state and focus --
-  const dirtyInputs = {};
-  let activeId = null;
-  let selectionStart = null;
-  let selectionEnd = null;
 
-  if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT')) {
-    activeId = document.activeElement.id;
-    if (document.activeElement.tagName === 'INPUT' && document.activeElement.type === 'text') {
-      try {
-        selectionStart = document.activeElement.selectionStart;
-        selectionEnd = document.activeElement.selectionEnd;
-      } catch(e) {}
-    }
-  }
+  db.ref(FIREBASE_PATH).on(
+    'value',
+    (snap) => {
+      const data = snap.val();
 
-  document.querySelectorAll('input[type="text"], input[type="number"]').forEach(inp => {
-    if (inp.id && inp.value !== inp.defaultValue) {
-      dirtyInputs[inp.id] = inp.value;
-    }
-  });
-  // ------------------------------------
-
-  const div = currentDiv();
-
-  const html = [
-    renderHeader(),
-    STATE.activePage === 'teams' ? renderTeamsPage() : renderPhaseBar(div) + renderPhaseContent(div),
-    TEAM_PORTAL ? renderTeamPortalPill() : '',
-  ].join('');
-
-  document.getElementById('app').innerHTML = html;
-  
-  // -- Restore dirty state and focus --
-  for (const id in dirtyInputs) {
-    const el = document.getElementById(id);
-    if (el) el.value = dirtyInputs[id];
-  }
-
-  if (activeId) {
-    const el = document.getElementById(activeId);
-    if (el) {
-      el.focus();
-      if (el.setSelectionRange && selectionStart !== null) {
-        try { el.setSelectionRange(selectionStart, selectionEnd); } catch(e) {}
+      if (data && data.divisions) {
+        applyLoadedState(data);
+      } else {
+        saveState();
       }
-    }
-  }
-  // ------------------------------------
 
-  bindEvents();
+      saveLocal();
+      renderApp();
+    },
+    (e) => {
+      console.warn('Firebase read failed', e);
+      toast('Firebase read failed. Using local copy.', 'err');
+      renderApp();
+    },
+  );
 }
 
-function renderEntryScreen() {
-  if (ENTRY_MODE === 'register_choice') {
+function nextTeamId(d) {
+  d.teamIdCounter = Number(d.teamIdCounter || 0) + 1;
+  return `t${d.teamIdCounter}`;
+}
+
+function nextFreeAgentId() {
+  STATE.freeAgentIdCounter = Number(STATE.freeAgentIdCounter || 0) + 1;
+  return `fa_${STATE.freeAgentIdCounter}`;
+}
+
+function findTeam(divId, teamId) {
+  const d = STATE.divisions[divId];
+  return d ? d.teams.find((t) => String(t.id) === String(teamId)) : null;
+}
+
+function allQualComplete(d) {
+  return d.qualifyingRounds.length > 0 &&
+    d.qualifyingRounds.every((r) => r.games.every((g) => g.complete));
+}
+
+function seedOf(team, standings) {
+  if (!team || !Array.isArray(standings)) return null;
+  const i = standings.findIndex((s) => s.team && s.team.id === team.id);
+  return i >= 0 ? i + 1 : null;
+}
+
+function resetGeneratedData(d) {
+  d.phase = 'registration';
+  d.qualifyingRounds = [];
+  d.standings = [];
+  d.bracket = null;
+  d.finalRankings = [];
+}
+
+function renderApp() {
+  normalizeState();
+
+  const app = $('app');
+  if (!app) return;
+
+  if (!HAS_ENTERED) {
+    app.innerHTML = renderEntry();
+    return;
+  }
+
+  app.innerHTML = [
+    renderHeader(),
+    TEAM_PORTAL ? renderPortalPill() : '',
+    STATE.activePage === 'teams'
+      ? renderTeamsPage()
+      : renderPhaseBar(div()) + renderDivision(div()),
+  ].join('');
+}
+
+function renderEntry() {
+  if (ENTRY_MODE === 'register') {
     return `
-    <div style = "display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding: 24px;" >
-        <div class="logo" style="margin-bottom: 32px;">
-          <span class="logo-icon" style="font-size: 48px;">🏐</span>
-          <div class="logo-wordmark">
-            <span class="logo-name" style="font-size: 32px;">Tournament Manager</span>
-          </div>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;">
+        <div class="logo" style="margin-bottom:32px;">
+          <span class="logo-icon" style="font-size:48px;">🏐</span>
+          <span class="logo-name" style="font-size:32px;">Tournament Manager</span>
         </div>
-        <div class="card" style="max-width: 500px; width: 100%; text-align: center; padding: 40px 24px;">
-          <h2 style="margin-top: 0; margin-bottom: 24px;">Select Division to Register</h2>
-          <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
-            <button class="btn btn-primary" data-action="entry-reg-div" data-div="beginner" style="flex: 1; padding: 20px; font-size: 16px; min-width: 140px;">
-              🏐 Beginner 4s
-            </button>
-            <button class="btn btn-primary" data-action="entry-reg-div" data-div="competitive" style="flex: 1; padding: 20px; font-size: 16px; min-width: 140px;">
-              ⚡ Competitive 2s
-            </button>
+
+        <div class="card" style="max-width:520px;width:100%;text-align:center;padding:40px 24px;">
+          <h2 style="margin-bottom:24px;">Select Division</h2>
+
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            ${Object.values(DIVS).map((d) => `
+              <button class="btn btn-primary" data-action="entry-register-division" data-div="${d.id}" style="flex:1;padding:20px;min-width:150px;">
+                ${d.icon} ${d.name}
+              </button>
+            `).join('')}
           </div>
-          <button class="btn btn-ghost" data-action="entry-back" style="margin-top: 24px;">← Back</button>
+
+          <button class="btn btn-ghost" data-action="entry-back" style="margin-top:24px;">← Back</button>
         </div>
       </div>
     `;
   }
 
   return `
-    <div style = "display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding: 24px;" >
-      <div class="logo" style="margin-bottom: 32px;">
-        <span class="logo-icon" style="font-size: 48px;">🏐</span>
-        <div class="logo-wordmark">
-          <span class="logo-name" style="font-size: 32px;">Tournament Manager</span>
-        </div>
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;">
+      <div class="logo" style="margin-bottom:32px;">
+        <span class="logo-icon" style="font-size:48px;">🏐</span>
+        <span class="logo-name" style="font-size:32px;">Tournament Manager</span>
       </div>
-      <div class="card" style="max-width: 400px; width: 100%; text-align: center; padding: 40px 24px;">
-        <h2 style="margin-top: 0; margin-bottom: 8px;">Welcome!</h2>
-        <p style="color: var(--text-muted); margin-bottom: 32px;">How would you like to proceed?</p>
-        
-        <div style="display: flex; flex-direction: column; gap: 12px;">
-          <button class="btn btn-primary" data-action="entry-view-team" style="padding: 16px; font-size: 16px;">
-            👤 View as Team
-          </button>
-          <button class="btn btn-secondary" data-action="entry-register-choice" style="padding: 16px; font-size: 16px;">
-            📝 Register Team
-          </button>
-          <button class="btn btn-secondary" data-action="entry-free-agent" style="padding: 16px; font-size: 16px; background: rgba(255,107,53,0.1); color: var(--accent); border-color: rgba(255,107,53,0.3);">
-            🙋 I'm a Free Agent
-          </button>
-          <div class="divider" style="margin: 16px 0;"></div>
-          <button class="btn btn-ghost" data-action="entry-organizer" style="padding: 12px; font-size: 15px;">
-            ⚙️ Organizer Access
-          </button>
+
+      <div class="card" style="max-width:420px;width:100%;text-align:center;padding:40px 24px;">
+        <h2 style="margin-top:0;">Welcome!</h2>
+        <p style="color:var(--text-muted);margin-bottom:32px;">How would you like to proceed?</p>
+
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <button class="btn btn-primary" data-action="entry-view-team" style="padding:16px;font-size:16px;">👤 View as Team</button>
+          <button class="btn btn-secondary" data-action="entry-register" style="padding:16px;font-size:16px;">📝 Register Team</button>
+          <button class="btn btn-secondary" data-action="entry-free-agent" style="padding:16px;font-size:16px;">🙋 I'm a Free Agent</button>
+
+          <div class="divider" style="margin:16px 0;"></div>
+
+          <button class="btn btn-ghost" data-action="entry-organizer" style="padding:12px;font-size:15px;">⚙️ Organizer Access</button>
         </div>
       </div>
     </div>
-    `;
+  `;
 }
 
-/* —— Header —— */
 function renderHeader() {
-  const div = currentDiv();
-  const ruleText = 'Volleyball · Win to 21, by 2 · Cap 23';
-
-  const divTabs = Object.values(DIV_CONFIG).map(cfg => {
-    const d      = STATE.divisions[cfg.id];
-    const active = STATE.activePage === 'division' && STATE.activeTab === cfg.id;
-    return `
-    <button class="tab ${active ? 'active' : ''}"
-  id = "tab-${cfg.id}" data-action="tab" data-div="${cfg.id}" >
-    ${ cfg.icon } ${ cfg.name }
-  <span class="tab-count">${d.teams.length}</span>
-      </button> `;
-  }).join('');
-
-  const teamsActive = STATE.activePage === 'teams';
-  const totalTeams  = Object.values(STATE.divisions).reduce((s, d) => s + d.teams.length, 0);
+  const total = Object.values(STATE.divisions).reduce((s, d) => s + d.teams.length, 0);
 
   return `
-    <div class="header" >
+    <div class="header">
       <div class="header-top">
         <div class="logo">
           <span class="logo-icon">🏐</span>
           <div class="logo-wordmark">
             <span class="logo-name">Tournament Manager</span>
-            <span class="logo-sub">${ruleText}</span>
+            <span class="logo-sub">Win to 21, by 2 · Cap 23</span>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <button class="btn btn-ghost btn-sm portal-login-btn" id="btn-team-login" data-action="team-login">
-            ${TEAM_PORTAL ? '👤 ' + esc(TEAM_PORTAL.teamName) : '👤 Team Login'}
-          </button>
-          <button class="btn-reset" id="btn-reset-all" data-action="reset-all">↺ Reset All</button>
-        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+  <button class="btn btn-ghost btn-sm" data-action="main-menu">
+    🏠 Main Menu
+  </button>
+
+  <button class="btn btn-ghost btn-sm" data-action="team-login">
+    ${TEAM_PORTAL ? `👤 ${esc(TEAM_PORTAL.teamName)}` : '👤 Team Login'}
+  </button>
+
+  ${admin() ? '<button type="button" class="btn-reset" data-action="reset-all">↺ Reset All</button>' : ''}
+</div>
       </div>
+
       <div class="tabs">
-        ${divTabs}
-        <button class="tab ${teamsActive ? 'active' : ''}" id="tab-teams" data-action="tab-teams">
+        ${Object.values(DIVS).map((cfg) => {
+    const active = STATE.activePage === 'division' && STATE.activeTab === cfg.id;
+    return `
+            <button class="tab ${active ? 'active' : ''}" data-action="tab" data-div="${cfg.id}">
+              ${cfg.icon} ${cfg.name}
+              <span class="tab-count">${STATE.divisions[cfg.id].teams.length}</span>
+            </button>
+          `;
+  }).join('')}
+
+        <button class="tab ${STATE.activePage === 'teams' ? 'active' : ''}" data-action="tab-teams">
           👥 Teams
-          <span class="tab-count">${totalTeams}</span>
+          <span class="tab-count">${total}</span>
         </button>
       </div>
-    </div> `;
-}
-
-/* ── Phase progress bar ── */
-function renderPhaseBar(div) {
-  const cur = PHASES.indexOf(div.phase);
-  let html  = '<div class="phase-bar">';
-
-  PHASES.forEach((ph, i) => {
-    const done   = i < cur;
-    const active = i === cur;
-    const cls    = done ? 'done' : active ? 'active' : '';
-    const icon   = done ? '✓' : active ? PHASE_ICONS[ph] : '○';
-    html += `<div class="phase-step" >
-    <div class="phase-label ${cls}">${icon} ${PHASE_LABELS[ph]}</div>
-             </div> `;
-    if (i < PHASES.length - 1)
-      html += `<div class="phase-line ${done ? 'done' : ''}" ></div> `;
-  });
-
-  html += '</div>';
-  return html;
-}
-
-/* ── Phase router ── */
-function renderPhaseContent(div) {
-  switch (div.phase) {
-    case 'registration': return renderRegistration(div);
-    case 'qualifying':   return renderQualifying(div);
-    case 'playoffs':     return renderPlayoffs(div);
-    case 'complete':     return renderComplete(div);
-    default:             return '';
-  }
-}
-
-/* =========================================================
-   TEAMS PAGE & PORTAL
-   ========================================================= */
-
-function renderTeamsPage() {
-  const totalTeams = Object.values(STATE.divisions).reduce((s, d) => s + d.teams.length, 0);
-  const totalFreeAgents = (STATE.freeAgents || []).length;
-  const subTab = STATE.teamsSubTab || 'teams';
-
-  let html = `<div class="teams-page-container">
-    <div class="sub-tabs">
-      <button class="sub-tab ${subTab === 'teams' ? 'active' : ''}" data-action="teams-sub-tab" data-sub="teams">
-        👥 Teams <span class="sub-tab-count">${totalTeams}</span>
-      </button>
-      <button class="sub-tab ${subTab === 'freeAgents' ? 'active' : ''}" data-action="teams-sub-tab" data-sub="freeAgents">
-        🙋 Free Agents <span class="sub-tab-count">${totalFreeAgents}</span>
-      </button>
-    </div>`;
-
-  if (subTab === 'teams') {
-    html += renderTeamsSubTab();
-  } else {
-    html += renderFreeAgentsSubTab();
-  }
-
-  html += '</div>';
-  return html;
-}
-
-function renderTeamsSubTab() {
-  let html = '';
-
-  // Add Team form
-  html += `<div class="teams-add-form">
-    <div class="signup-field">
-      <label>Division</label>
-      <select id="teams-add-div">
-        <option value="beginner" style="background:var(--bg-surface);">🏐 Beginner 4s</option>
-        <option value="competitive" style="background:var(--bg-surface);">⚡ Competitive 2s</option>
-      </select>
     </div>
-    <div class="signup-field" style="flex:1;">
-      <label>Team Name</label>
-      <input type="text" id="teams-add-name" placeholder="Enter team name..." maxlength="40">
-    </div>
-    <button class="btn btn-primary btn-sm" data-action="add-team-from-teams" style="padding:9px 18px;">+ Add Team</button>
-  </div>`;
-
-  for (const divId in STATE.divisions) {
-    const div = STATE.divisions[divId];
-    const cfg = DIV_CONFIG[divId];
-
-    html += `<div class="section-title">${cfg.icon} ${cfg.name} <span style="font-size:12px;font-weight:400;color:var(--text-muted);">(${div.teams.length})</span></div>`;
-
-    if (div.teams.length === 0) {
-      html += `<div class="empty-state" style="margin-bottom:24px;"><div class="empty-sub">No teams registered yet</div></div>`;
-      continue;
-    }
-
-    html += `<div class="team-list" style="margin-bottom:32px;">`;
-    div.teams.forEach((team, i) => {
-      const expanded = div.expandedRosterId === team.id;
-      const players = team.players || [];
-      const maxPlayers = cfg.playerCount;
-      const missing = maxPlayers - players.length;
-
-      const isMyTeam = TEAM_PORTAL && TEAM_PORTAL.teamId === team.id;
-      const canEdit = !TEAM_PORTAL || isMyTeam;
-
-      let rosterHtml = '';
-      if (expanded) {
-        const slots = [];
-        for (let p = 0; p < maxPlayers; p++) {
-          const player = players[p];
-          if (canEdit) {
-            if (player) {
-              slots.push(`<div class="roster-slot filled">
-                <span class="roster-name">${esc(player)}</span>
-                <button class="btn btn-ghost btn-xs" data-action="remove-player" data-team-id="${team.id}" data-player-idx="${p}" data-div="${div.id}">✕</button>
-              </div>`);
-            } else {
-              slots.push(`<div class="roster-slot empty">
-                <input type="text" class="roster-input" id="new-player-${team.id}-${p}" placeholder="Player ${p+1} Name" maxlength="40">
-                <button class="btn btn-primary btn-xs" data-action="add-player" data-team-id="${team.id}" data-player-idx="${p}" data-div="${div.id}">Add</button>
-              </div>`);
-            }
-          } else {
-            if (player) {
-              slots.push(`<div class="roster-slot filled read-only"><span class="roster-name">${esc(player)}</span></div>`);
-            } else {
-              slots.push(`<div class="roster-slot empty read-only"><span class="roster-name" style="color:var(--text-muted);font-style:italic;">Open Slot</span></div>`);
-            }
-          }
-        }
-        rosterHtml = `<div class="roster-editor">${slots.join('')}</div>`;
-      }
-
-      const lookingBadge = missing > 0
-        ? `<span class="looking-for-badge">🔍 Looking for ${missing} player${missing > 1 ? 's' : ''}</span>`
-        : '';
-
-      html += `
-    <div class="team-card" ${isMyTeam ? 'style="border-color:var(--accent);"' : ''}>
-      <div class="team-row" style="cursor:pointer;" data-action="toggle-roster" data-team-id="${team.id}" data-div="${div.id}">
-        <div class="team-num">${i + 1}</div>
-        <div class="team-name-group">
-          <span class="team-name">${esc(team.name)} ${isMyTeam ? '👁️' : ''}</span>
-          <span class="team-roster-count">${players.length}/${maxPlayers}</span>
-          ${lookingBadge}
-        </div>
-        <div class="team-btns" data-action="noop">
-          ${isMyTeam
-            ? '<span class="pill pill-ok" style="margin-right:8px;">👁️ Viewing</span>'
-            : `<button class="btn btn-ghost btn-sm" style="margin-right:8px;" data-action="login-as-team" data-team-id="${team.id}" data-div="${div.id}">👁️ View As</button>`}
-          <button class="btn btn-danger btn-sm" data-action="delete-team" data-team-id="${team.id}" data-div="${div.id}">✕</button>
-          <span style="color:var(--text-sub);font-size:10px;margin-left:8px;">${expanded ? '▲' : '▼'}</span>
-        </div>
-      </div>
-          ${ rosterHtml }
-        </div> `;
-    });
-    html += `</div> `;
-  }
-  
-  html += `</div> `;
-  return html;
+  `;
 }
 
-function renderFreeAgentsSubTab() {
-  const freeAgents = STATE.freeAgents || [];
-
-  let html = `
-    <div class="card" style="margin-bottom:20px;">
-      <div class="card-title">🙋 Free Agents — Looking for a Team</div>
-      <div class="card-sub">Don't have a full team? Sign up here and get matched on tournament day!</div>
-    </div>
-
-    <div class="signup-form">
-      <div class="signup-form-title">Sign Up as Free Agent</div>
-      <div class="signup-row">
-        <div class="signup-field" style="flex:1;">
-          <label>Your Name</label>
-          <input type="text" id="fa-name" placeholder="Enter your name..." maxlength="40">
-        </div>
-        <div class="signup-field">
-          <label>Preferred Format</label>
-          <div class="format-check">
-            <label><input type="checkbox" id="fa-fmt-beginner" value="beginner"> 🏐 Beginner 4s</label>
-            <label><input type="checkbox" id="fa-fmt-competitive" value="competitive"> ⚡ Competitive 2s</label>
-          </div>
-        </div>
-        <button class="btn btn-primary btn-sm" data-action="add-free-agent" style="padding:9px 18px;">🙋 Sign Me Up</button>
-      </div>
-    </div>`;
-
-  if (freeAgents.length === 0) {
-    html += `<div class="empty-state" style="margin-bottom:24px;">
-      <div class="empty-icon">🙋</div>
-      <div class="empty-title">No free agents yet</div>
-      <div class="empty-sub">Be the first to sign up and find a team!</div>
-    </div>`;
-  } else {
-    const beginnerAgents = freeAgents.filter(fa => (fa.formats || []).includes('beginner'));
-    const competitiveAgents = freeAgents.filter(fa => (fa.formats || []).includes('competitive'));
-
-    html += `<div class="section-title">🏐 Interested in Beginner 4s <span style="font-size:12px;font-weight:400;color:var(--text-muted);">(${beginnerAgents.length})</span></div>`;
-    if (beginnerAgents.length === 0) {
-      html += `<div class="empty-state" style="margin-bottom:20px;padding:16px;"><div class="empty-sub">No one signed up for this format yet</div></div>`;
-    } else {
-      html += '<div class="free-agent-list" style="margin-bottom:24px;">';
-      beginnerAgents.forEach((fa, i) => { html += renderFreeAgentCard(fa, i); });
-      html += '</div>';
-    }
-
-    html += `<div class="section-title">⚡ Interested in Competitive 2s <span style="font-size:12px;font-weight:400;color:var(--text-muted);">(${competitiveAgents.length})</span></div>`;
-    if (competitiveAgents.length === 0) {
-      html += `<div class="empty-state" style="margin-bottom:20px;padding:16px;"><div class="empty-sub">No one signed up for this format yet</div></div>`;
-    } else {
-      html += '<div class="free-agent-list" style="margin-bottom:24px;">';
-      competitiveAgents.forEach((fa, i) => { html += renderFreeAgentCard(fa, i); });
-      html += '</div>';
-    }
-  }
-
-  return html;
-}
-
-function renderFreeAgentCard(fa, idx) {
-  const formats = (fa.formats || []).map(f => {
-    const cfg = DIV_CONFIG[f];
-    return cfg ? `<span class="format-badge ${f}">${cfg.icon} ${cfg.name}</span>` : '';
-  }).join('');
-
-  return `<div class="free-agent-card">
-    <div class="fa-info">
-      <div class="fa-num">${idx + 1}</div>
-      <span class="fa-name">${esc(fa.name)}</span>
-      <div class="fa-formats">${formats}</div>
-    </div>
-    <button class="btn btn-danger btn-xs" data-action="delete-free-agent" data-fa-id="${fa.id}">✕</button>
-  </div>`;
-}
-
-function renderTeamPortalPill() {
-  if (!TEAM_PORTAL) return '';
+function renderPortalPill() {
   return `
-    <div class="team-portal-pill" >
+    <div class="team-portal-pill">
       <span>Viewing as: <strong>${esc(TEAM_PORTAL.teamName)}</strong></span>
-      <button class="btn btn-ghost btn-xs" data-action="team-login">Exit</button>
+      <button class="btn btn-ghost btn-xs" data-action="exit-team-view">Exit</button>
     </div>
-    `;
+  `;
 }
 
-/* =========================================================
-   REGISTRATION
-   ========================================================= */
-
-function renderRegistration(div) {
-  const cfg     = DIV_CONFIG[div.id];
-  const canStart = div.teams.length >= 2;
-
-  const N = div.teams.length;
-  const rounds = div.qualifyingRoundsCount || 3;
-
-  let qualText = "0 sets";
-  let playoffText = "0 sets";
-  let totalText = "0 sets";
-
-  if (N >= 2) {
-    let minQual = rounds;
-    let maxQual = rounds;
-    if (N % 2 !== 0) {
-      minQual = rounds - 1;
-      maxQual = rounds;
-    }
-
-    let minPlay = 0;
-    let maxPlay = 0;
-    if (N === 2)      { minPlay = 1; maxPlay = 1; }
-    else if (N === 3) { minPlay = 1; maxPlay = 2; }
-    else if (N === 4) { minPlay = 2; maxPlay = 2; }
-    else if (N === 5) { minPlay = 1; maxPlay = 3; }
-    else if (N === 6) { minPlay = 2; maxPlay = 3; }
-    else if (N === 7) { minPlay = 2; maxPlay = 3; }
-    else if (N >= 8)  { minPlay = 3; maxPlay = 3; }
-
-    const minTotal = minQual + minPlay;
-    const maxTotal = maxQual + maxPlay;
-
-    qualText = minQual === maxQual ? `${ minQual } sets` : `${ minQual } to ${ maxQual } sets(due to byes)`;
-    playoffText = minPlay === maxPlay ? `${ minPlay } sets` : `${ minPlay } to ${ maxPlay } sets(depending on results / byes)`;
-    totalText = minTotal === maxTotal ? `${ minTotal } sets` : `${ minTotal } to ${ maxTotal } sets`;
-  } else {
-    qualText = "0 sets (need ≥ 2 teams)";
-  }
-
-  let teamsHtml = '';
-  if (div.teams.length === 0) {
-    teamsHtml = `
-    <div class="empty-state" >
-        <div class="empty-icon">👥</div>
-        <div class="empty-title">No teams yet</div>
-        <div class="empty-sub">Add teams manually or use "Add Test Teams"</div>
-      </div> `;
-  } else {
-    teamsHtml = '<div class="team-list">' +
-      div.teams.map((team, i) => {
-        const editing = div.editingTeamId === team.id;
-        const expanded = div.expandedRosterId === team.id;
-        const players = team.players || [];
-        const maxPlayers = cfg.playerCount;
-        
-        let rosterHtml = '';
-        if (expanded) {
-          const slots = [];
-          for (let p = 0; p < maxPlayers; p++) {
-            const player = players[p];
-            if (player) {
-              slots.push(`
-    <div class="roster-slot filled" >
-                  <span class="roster-name">${esc(player)}</span>
-                  <button class="btn btn-ghost btn-xs" data-action="remove-player" data-team-id="${team.id}" data-player-idx="${p}" data-div="${div.id}">✕</button>
-                </div>
-    `);
-            } else {
-              slots.push(`
-    <div class="roster-slot empty" >
-      <input type="text" class="roster-input" id="new-player-${team.id}-${p}" placeholder="Player ${p+1} Name" maxlength="40">
-        <button class="btn btn-primary btn-xs" data-action="add-player" data-team-id="${team.id}" data-player-idx="${p}" data-div="${div.id}">Add</button>
-      </div>
-  `);
-            }
-          }
-          rosterHtml = `<div class="roster-editor" > ${ slots.join('') }</div> `;
-        }
-
-        return `
-    <div class="team-card" >
-      <div class="team-row" style="cursor:pointer;" data-action="toggle-roster" data-team-id="${team.id}" data-div="${div.id}">
-        <div class="team-num">${i + 1}</div>
-        ${editing ? `
-                <input type="text" class="team-edit-input"
-                       id="edit-input-${team.id}"
-                       value="${esc(team.name)}"
-                       data-action="edit-input"
-                       data-team-id="${team.id}" data-div="${div.id}"
-                       maxlength="40"
-                       onclick="event.stopPropagation()">
-                <div class="team-btns" data-action="noop">
-                  <button class="btn btn-success btn-sm"
-                          data-action="save-edit"
-                          data-team-id="${team.id}" data-div="${div.id}">Save</button>
-                  <button class="btn btn-ghost btn-sm"
-                          data-action="cancel-edit" data-div="${div.id}">Cancel</button>
-                </div>
-              ` : `
-                <div class="team-name-group">
-                  <span class="team-name">${esc(team.name)}</span>
-                  <span class="team-roster-count">${players.length}/${maxPlayers}</span>
-                </div>
-                <div class="team-btns" data-action="noop">
-                  <button class="btn btn-ghost btn-sm"
-                          data-action="edit-team"
-                          data-team-id="${team.id}" data-div="${div.id}">✏️</button>
-                  <button class="btn btn-danger btn-sm"
-                          data-action="delete-team"
-                          data-team-id="${team.id}" data-div="${div.id}">✕</button>
-                </div>
-              `}
-      </div>
-            ${ rosterHtml }
-          </div> `;
-      }).join('') + '</div>';
-  }
+function renderPhaseBar(d) {
+  const cur = PHASES.indexOf(d.phase);
+  const icons = {
+    registration: '📋',
+    qualifying: '🏅',
+    playoffs: '🏆',
+    complete: '🎉',
+  };
 
   return `
-    <div class="card" style = "margin-bottom:16px;" >
-      <div style="margin-bottom:16px;">
-        <div class="card-title">${cfg.icon} ${cfg.name} — Registration</div>
-        <div class="card-sub">Add your teams before starting the tournament</div>
-      </div>
+    <div class="phase-bar">
+      ${PHASES.map((p, i) => {
+    const cls = i < cur ? 'done' : i === cur ? 'active' : '';
+    const icon = i < cur ? '✓' : i === cur ? icons[p] : '○';
 
-      <div class="settings-group">
-        <div class="settings-title">Round Robin & Playoff Estimates</div>
-        <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
-          <label for="num-rounds-${div.id}" style="font-weight:600; font-size:13px; color:var(--text-sub);">Qualifying Rounds:</label>
-          <select id="num-rounds-${div.id}" class="select-input" data-action="set-rounds" data-div="${div.id}" style="padding:6px 12px; border-radius:var(--r-sm); border:1px solid var(--border); background:rgba(255,255,255,0.035); color:var(--text); font-size:13px; outline:none; cursor:pointer;">
-            <option value="1" ${rounds === 1 ? 'selected' : ''} style="background:var(--bg-surface);">1 Round</option>
-            <option value="2" ${rounds === 2 ? 'selected' : ''} style="background:var(--bg-surface);">2 Rounds</option>
-            <option value="3" ${rounds === 3 ? 'selected' : ''} style="background:var(--bg-surface);">3 Rounds (Default)</option>
-            <option value="4" ${rounds === 4 ? 'selected' : ''} style="background:var(--bg-surface);">4 Rounds</option>
-            <option value="5" ${rounds === 5 ? 'selected' : ''} style="background:var(--bg-surface);">5 Rounds</option>
-          </select>
-        </div>
-        <div class="estimate-box" style="background:rgba(255,107,53,0.03); border:1px solid var(--border); border-radius:var(--r); padding:14px 16px;">
-          <div style="font-weight:700; font-size:13px; color:var(--accent); margin-bottom:8px; display:flex; align-items:center; gap:6px;">
-            📊 Estimated Sets Played per Team:
+    return `
+          <div class="phase-step">
+            <div class="phase-label ${cls}">${icon} ${p[0].toUpperCase() + p.slice(1)}</div>
           </div>
-          <div style="font-size:12px; color:var(--text-sub); line-height:1.6;">
-            • <strong>Qualifying Round Robin:</strong> ${qualText}<br>
-            • <strong>Playoff Bracket:</strong> ${playoffText}<br>
-            • <strong>Total Sets per Team:</strong> <strong style="color:var(--text); font-size:13px;">${totalText}</strong>
-          </div>
+          ${i < PHASES.length - 1 ? `<div class="phase-line ${i < cur ? 'done' : ''}"></div>` : ''}
+        `;
+  }).join('')}
+    </div>
+  `;
+}
+
+function renderDivision(d) {
+  if (d.phase === 'registration') return renderRegistration(d);
+  if (d.phase === 'qualifying') return renderQualifying(d);
+  if (d.phase === 'playoffs') return renderPlayoffs(d);
+  return renderComplete(d);
+}
+
+function renderRegistration(d) {
+  const cfg = DIVS[d.id];
+
+  return `
+    <div class="card" style="margin-bottom:20px;">
+      <div class="section-title">${cfg.icon} ${cfg.name} Registration</div>
+      <div class="card-sub">${cfg.players} players per team.</div>
+    </div>
+
+    ${admin() ? `
+      <div class="action-bar">
+        <div class="action-bar-info">
+          <strong>${d.teams.length}</strong> teams registered
         </div>
+
+        <div class="action-bar-btns">
+  <input type="number" id="qual-round-count" min="1" max="10" value="${d.qualifyingRoundsCount}" style="width:70px;">
+  <button class="btn btn-secondary btn-sm" data-action="set-rounds" data-div="${d.id}">Set Rounds</button>
+  <button class="btn btn-danger btn-sm" data-action="clear-teams" data-div="${d.id}">Clear</button>
+  <button class="btn btn-primary btn-sm" data-action="start-tournament" data-div="${d.id}" ${d.teams.length >= 2 ? '' : 'disabled'}>Start Tournament</button>
+</div>
       </div>
 
       <div class="reg-form">
-        <input type="text" id="new-team-name"
-               placeholder="Team name…" maxlength="40"
-               style="flex:1;">
-        <button class="btn btn-primary"
-                id="btn-add-team" data-action="add-team" data-div="${div.id}">
-          + Add Team
-        </button>
+        <input id="new-team-name" type="text" placeholder="Team name..." maxlength="40">
+        <button class="btn btn-primary" data-action="add-team" data-div="${d.id}">+ Add Team</button>
       </div>
+    ` : ''}
 
-      <div class="reg-actions">
-        <button class="btn btn-secondary btn-sm"
-                data-action="add-test" data-div="${div.id}">
-          🎲 Add 8 Test Teams
-        </button>
-        <button class="btn btn-ghost btn-sm"
-                data-action="clear-teams" data-div="${div.id}">
-          Clear All
-        </button>
-      </div>
-
-      <div class="section-title">
-        Teams
-        <span style="font-size:12px;font-weight:400;color:var(--text-muted);">(${div.teams.length})</span>
-      </div>
-      ${teamsHtml}
-    </div>
-
-    <div style="display:flex;justify-content:flex-end;">
-      <button class="btn btn-primary btn-xl"
-              id="btn-start" data-action="start-tournament" data-div="${div.id}"
-              ${canStart ? '' : 'disabled'}>
-        🚀 Start Tournament ${canStart ? `· ${div.teams.length} teams` : '(need ≥ 2 teams)'}
-      </button>
-    </div>`;
+    ${renderTeamList(d, false)}
+  `;
 }
 
-/* =========================================================
-   QUALIFYING
-   ========================================================= */
+function renderTeamsPage() {
+  const totalTeams = Object.values(STATE.divisions).reduce((s, d) => s + d.teams.length, 0);
 
-function renderQualifying(div) {
-  const standings   = Tournament.calculateStandings(div.teams, div.qualifyingRounds);
-  const allDone     = allQualComplete(div);
+  return `
+    <div class="teams-page-container">
+      <div class="sub-tabs">
+        <button class="sub-tab ${STATE.teamsSubTab === 'teams' ? 'active' : ''}" data-action="teams-sub-tab" data-sub="teams">
+          👥 Teams <span class="sub-tab-count">${totalTeams}</span>
+        </button>
 
-  let html = `
-    <div class="action-bar" >
-      <div class="action-bar-info">📋 Enter scores — standings update live</div>
-      <div class="action-bar-btns">
-        ${allDone
-          ? `<span class="pill pill-ok">✓ All games complete</span>
-             <button class="btn btn-primary"
-                     id="btn-gen-playoffs" data-action="gen-playoffs" data-div="${div.id}">
-               🏆 Generate Playoffs
-             </button>`
-          : ''}
+        <button class="sub-tab ${STATE.teamsSubTab === 'freeAgents' ? 'active' : ''}" data-action="teams-sub-tab" data-sub="freeAgents">
+          🙋 Free Agents <span class="sub-tab-count">${STATE.freeAgents.length}</span>
+        </button>
       </div>
-    </div> `;
 
-  /* Rounds */
-  for (const round of div.qualifyingRounds) {
-    const done  = round.games.filter(g => g.complete).length;
-    const total = round.games.length;
-    html += `
-    <div class="round-block" >
+      ${STATE.teamsSubTab === 'teams' ? renderTeamsSubTab() : renderFreeAgentsSubTab()}
+    </div>
+  `;
+}
+
+function renderTeamsSubTab() {
+  return `
+    ${admin() ? `
+      <div class="teams-add-form">
+        <div class="signup-field">
+          <label>Division</label>
+          <select id="teams-add-div">
+            ${Object.values(DIVS).map((d) => `<option value="${d.id}">${d.icon} ${d.name}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="signup-field" style="flex:1;">
+          <label>Team Name</label>
+          <input id="teams-add-name" type="text" placeholder="Enter team name..." maxlength="40">
+        </div>
+
+        <button class="btn btn-primary btn-sm" data-action="add-team-from-teams">+ Add Team</button>
+      </div>
+    ` : ''}
+
+    ${Object.keys(DIVS).map((id) => renderTeamList(STATE.divisions[id], true)).join('')}
+  `;
+}
+
+function renderTeamList(d, title) {
+  const cfg = DIVS[d.id];
+
+  if (d.teams.length === 0) {
+    return `
+      ${title ? `<div class="section-title">${cfg.icon} ${cfg.name} <span style="font-size:12px;color:var(--text-muted);">(0)</span></div>` : ''}
+      <div class="empty-state" style="margin-bottom:24px;">
+        <div class="empty-sub">No teams registered yet</div>
+      </div>
+    `;
+  }
+
+  return `
+    ${title ? `<div class="section-title">${cfg.icon} ${cfg.name} <span style="font-size:12px;color:var(--text-muted);">(${d.teams.length})</span></div>` : ''}
+
+    <div class="team-list" style="margin-bottom:32px;">
+      ${d.teams.map((t, i) => renderTeamCard(d, t, i)).join('')}
+    </div>
+  `;
+}
+
+function renderTeamCard(d, t, i) {
+  const cfg = DIVS[d.id];
+  const expanded = d.expandedTeamId === t.id;
+  const players = t.players || [];
+  const mine = TEAM_PORTAL && TEAM_PORTAL.divId === d.id && TEAM_PORTAL.teamId === t.id;
+  const canEditRoster = canManageTeam(d.id, t.id);
+
+  return `
+    <div class="team-card" ${mine ? 'style="border-color:var(--accent);"' : ''}>
+      <div class="team-row" data-action="toggle-roster" data-div="${d.id}" data-team-id="${t.id}" style="cursor:pointer;">
+        <div class="team-num">${i + 1}</div>
+
+        <div class="team-name-group" style="flex:1;">
+          <span class="team-name">${esc(t.name)} ${mine ? '👁️' : ''}</span>
+          <span class="team-roster-count">${players.length}/${cfg.players}</span>
+        </div>
+
+        <div class="team-btns">
+          ${mine
+      ? '<span class="pill pill-ok">Viewing</span>'
+      : `<button type="button" class="btn btn-ghost btn-sm" data-action="login-as-team" data-div="${d.id}" data-team-id="${t.id}">👁️ View As</button>`
+    }
+
+          ${canManageTeam(d.id, t.id) ? `
+            <button type="button" class="btn btn-ghost btn-sm" data-action="edit-team-name" data-div="${d.id}" data-team-id="${t.id}">Edit</button>
+            <button type="button" class="btn btn-danger btn-sm" data-action="delete-team" data-div="${d.id}" data-team-id="${t.id}">✕</button>
+          ` : ''}
+
+          <span style="color:var(--text-sub);font-size:10px;">${expanded ? '▲' : '▼'}</span>
+        </div>
+      </div>
+
+      ${expanded ? renderRoster(d, t, canEditRoster) : ''}
+    </div>
+  `;
+}
+
+function renderRoster(d, t, canEdit) {
+  const cfg = DIVS[d.id];
+  const slots = [];
+
+  for (let i = 0; i < cfg.players; i++) {
+    const p = (t.players || [])[i];
+
+    slots.push(`
+      <div class="roster-slot ${p ? 'filled' : 'empty'}">
+        ${p
+        ? `
+            <span class="roster-name">${esc(p)}</span>
+            ${canEdit ? `<button class="btn btn-ghost btn-xs" data-action="remove-player" data-div="${d.id}" data-team-id="${t.id}" data-player-idx="${i}">✕</button>` : ''}
+          `
+        : canEdit
+          ? `
+              <input class="roster-input" id="player-${t.id}-${i}" placeholder="Player ${i + 1} name">
+              <button class="btn btn-primary btn-xs" data-action="add-player" data-div="${d.id}" data-team-id="${t.id}" data-player-idx="${i}">Add</button>
+            `
+          : '<span class="roster-name" style="color:var(--text-muted);">Open slot</span>'
+      }
+      </div>
+    `);
+  }
+
+  return `<div class="roster-editor">${slots.join('')}</div>`;
+}
+
+function renderFreeAgentsSubTab() {
+  return `
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-title">🙋 Free Agents</div>
+      <div class="card-sub">Sign up here if you want to be matched with a team.</div>
+    </div>
+
+    <div class="signup-form">
+      <div class="signup-row">
+        <div class="signup-field" style="flex:1;">
+          <label>Your Name</label>
+          <input id="fa-name" type="text" placeholder="Enter your name...">
+        </div>
+
+        <div class="signup-field">
+          <label>Preferred Format</label>
+          <div class="format-check">
+            <label><input id="fa-fmt-beginner" type="checkbox"> 🏐 Beginner 4s</label>
+            <label><input id="fa-fmt-competitive" type="checkbox"> ⚡ Competitive 2s</label>
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-sm" data-action="add-free-agent">🙋 Sign Me Up</button>
+      </div>
+    </div>
+
+    ${STATE.freeAgents.length === 0
+      ? '<div class="empty-state"><div class="empty-title">No free agents yet</div></div>'
+      : Object.keys(DIVS).map((id) => {
+        const cfg = DIVS[id];
+        const list = STATE.freeAgents.filter((fa) => fa.formats.includes(id));
+
+        return `
+            <div class="section-title">${cfg.icon} Interested in ${cfg.name} <span style="font-size:12px;color:var(--text-muted);">(${list.length})</span></div>
+            <div class="free-agent-list" style="margin-bottom:24px;">
+              ${list.map((fa, i) => renderFreeAgent(fa, i)).join('') || '<div class="empty-sub">No one yet</div>'}
+            </div>
+          `;
+      }).join('')
+    }
+  `;
+}
+
+function renderFreeAgent(fa, i) {
+  return `
+    <div class="free-agent-card">
+      <div class="fa-info">
+        <div class="fa-num">${i + 1}</div>
+        <span class="fa-name">${esc(fa.name)}</span>
+        <div class="fa-formats">
+          ${fa.formats.map((f) => `<span class="format-badge ${f}">${DIVS[f].icon} ${DIVS[f].name}</span>`).join('')}
+        </div>
+      </div>
+
+      ${admin() ? `<button class="btn btn-danger btn-xs" data-action="delete-free-agent" data-fa-id="${fa.id}">✕</button>` : ''}
+    </div>
+  `;
+}
+
+function renderQualifying(d) {
+  const standings = Tournament.calculateStandings(d.teams, d.qualifyingRounds);
+
+  return `
+    <div class="action-bar">
+      <div class="action-bar-info">Qualifying · ${DIVS[d.id].name}</div>
+
+      <div class="action-bar-btns">
+        ${admin() ? `
+          <button class="btn btn-secondary btn-sm" data-action="back-registration" data-div="${d.id}">← Registration</button>
+          <button class="btn btn-primary btn-sm" data-action="generate-playoffs" data-div="${d.id}" ${allQualComplete(d) ? '' : 'disabled'}>Generate Playoffs</button>
+        ` : ''}
+      </div>
+    </div>
+
+    ${d.qualifyingRounds.map((r) => `
+      <div class="round-block">
         <div class="round-header">
-          <span class="round-label">Round ${round.roundNumber}</span>
-          <span class="round-status">${done}/${total} scored</span>
-          ${round.byeTeam
-            ? `<span class="pill pill-warn">🔄 BYE: ${esc(round.byeTeam.name)}</span>`
-            : ''}
+          <span class="round-label">Round ${r.roundNumber}</span>
+          <span class="round-status">
+            ${r.games.filter((g) => g.complete).length}/${r.games.length} complete${r.byeTeam ? ` · Bye: ${esc(r.byeTeam.name)}` : ''}
+          </span>
         </div>
+
         <div class="games-grid">
-          ${round.games.map(g => renderQualGame(g, div.id)).join('')}
+          ${r.games.map((g) => renderGame(d, g, 'qual')).join('')}
         </div>
-      </div> `;
-  }
-
-  /* Standings table */
-  html += `
-    <div class="divider" ></div>
-      <div class="section-title">
-        Standings
-        ${allDone ? '<span class="pill pill-ok" style="font-size:11px;">Final</span>' : ''}
       </div>
-    ${ renderStandingsTable(standings) } `;
-
-  return html;
-}
-
-function renderQualGame(game, divId) {
-  const div = STATE.divisions[divId];
-  const maxScore = 23; // div.scoringRule was removed
-
-  const isPortalActive = !!TEAM_PORTAL;
-  const isMyGame = isPortalActive && (game.teamA.id === TEAM_PORTAL.teamId || game.teamB.id === TEAM_PORTAL.teamId);
-  const portalCls = isPortalActive ? (isMyGame ? ' portal-highlight' : ' portal-dim') : '';
-
-  if (game.complete) {
-    const aWon = game.scoreA > game.scoreB;
-    return `
-    <div class="game-card done${portalCls}" id="gc-${game.id}">
-        <span class="gt ${aWon ? 'win' : 'loss'}">${esc(game.teamA.name)}</span>
-        <div class="score-display">
-          <span style="color:${aWon ? 'var(--green)' : 'var(--red)'}">${game.scoreA}</span>
-          <span class="score-dash">–</span>
-          <span style="color:${!aWon ? 'var(--green)' : 'var(--red)'}">${game.scoreB}</span>
-        </div>
-        <span class="gt ${!aWon ? 'win' : 'loss'}" style="text-align:right;">${esc(game.teamB.name)}</span>
-        ${
-    isPortalActive ? '' : `<button class="btn btn-ghost btn-sm"
-                data-action="edit-qual-score"
-                data-div="${divId}" data-game-id="${game.id}">✏️</button>`
-  }
-      </div> `;
-  }
-
-  return `
-    <div class="game-card live${portalCls}" id="gc-${game.id}">
-      <span class="gt">${esc(game.teamA.name)}</span>
-      <div class="score-entry">
-        <input type="number" class="score-input"
-               id="qs-${game.id}-a" min="0" max="${maxScore}" placeholder="–" ${isPortalActive ? 'disabled' : ''}>
-        <span class="score-sep">vs</span>
-        <input type="number" class="score-input"
-               id="qs-${game.id}-b" min="0" max="${maxScore}" placeholder="–" ${isPortalActive ? 'disabled' : ''}>
-        ${isPortalActive ? '' : `<button class="btn btn-primary btn-sm"
-                data-action="save-qual-score"
-                data-div="${divId}" data-game-id="${game.id}">Save</button>`}
-      </div>
-      <span class="gt" style="text-align:right;">${esc(game.teamB.name)}</span>
-    </div>`;
-}
-
-/* =========================================================
-   STANDINGS TABLE (shared by Qualifying & Playoffs)
-   ========================================================= */
-
-function renderStandingsTable(standings) {
-  if (!standings.length) return '<div class="empty-state"><div class="empty-title">No data yet</div></div>';
-
-  const rows = standings.map((e, i) => {
-    const rank  = i + 1;
-    const rCls  = rank <= 3 ? `r${ rank } ` : '';
-    const diff  = e.diff;
-    const dStr  = diff > 0 ? `+ ${ diff } ` : `${ diff } `;
-    const dCls  = diff > 0 ? 'diff-pos' : diff < 0 ? 'diff-neg' : '';
-    return `
-    <tr>
-        <td><span class="rank-circle ${rCls}">${rank}</span></td>
-        <td><strong>${esc(e.team.name)}</strong></td>
-        <td>${e.wins}</td>
-        <td>${e.losses}</td>
-        <td class="${dCls}">${dStr}</td>
-        <td>${e.pf}</td>
-      </tr> `;
-  }).join('');
-
-  return `
-    <div class="card" >
-      <div class="standings-wrap">
-        <table class="standings">
-          <thead>
-            <tr>
-              <th>#</th><th>Team</th>
-              <th>W</th><th>L</th><th>Diff</th><th>PF</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </div> `;
-}
-
-/* =========================================================
-   PLAYOFFS
-   ========================================================= */
-
-function renderPlayoffs(div) {
-  const bracket = div.bracket;
-  if (!bracket) return '<div class="empty-state"><div class="empty-title">No bracket</div></div>';
-
-  const allDone = Tournament.isBracketComplete(bracket);
-
-  let html = `
-    <div class="action-bar" >
-      <div class="action-bar-info">🏆 Enter bracket scores — teams advance automatically</div>
-      <div class="action-bar-btns">
-        ${allDone
-          ? `<span class="pill pill-ok">✓ All done</span>
-             <button class="btn btn-primary"
-                     id="btn-finish" data-action="finish-tournament" data-div="${div.id}">
-               🎉 View Final Rankings
-             </button>`
-          : ''}
-      </div>
-    </div> `;
-
-  /* Main bracket — classic tree */
-  html += `<div class="bracket-section" > `;
-  html += `<div class="bracket-section-title" >🏆 Main Bracket</div> `;
-  html += renderBracketTree(bracket, div);
-  html += `</div> `;
-
-  /* 3rd place */
-  if (bracket.extraGames?.third_place) {
-    const g = bracket.gameMap['third_place'];
-    if (g && !g.isNA) {
-      html += `
-    <div class="bracket-section" >
-          <div class="bracket-section-title">🥉 3rd Place Game</div>
-          <div class="bracket-games">
-            ${renderBracketGame(g, div)}
-          </div>
-        </div> `;
-    }
-  }
-
-  /* Placement 5-8 */
-  if (bracket.placementRounds?.length) {
-    const hasAny = bracket.placementRounds.some(round =>
-      round.gameIds.some(gid => {
-        const g = bracket.gameMap[gid];
-        return g && !g.isNA && (g.teamA || g.teamB || g.complete);
-      })
-    );
-    if (hasAny) {
-      html += `<div class="bracket-section" > `;
-      html += `<div class="bracket-section-title" >📊 5th–8th Placement Bracket</div> `;
-      for (const round of bracket.placementRounds) {
-        html += renderBracketRound(round, bracket, div);
-      }
-      html += `</div> `;
-    }
-  }
-
-  /* Qualifying standings reference */
-  html += `
-    <div class="divider" ></div>
-      <div class="section-title">Qualifying Standings (Seeding Reference)</div>
-    ${ renderStandingsTable(div.standings) } `;
-
-  return html;
-}
-
-function renderBracketRound(round, bracket, div) {
-  const games = round.gameIds
-    .map(gid => bracket.gameMap[gid])
-    .filter(g => g && !g.isNA);
-
-  if (!games.length) return '';
-
-  return `
-    <div class="bracket-round" >
-      <div class="bracket-round-label">${round.name}</div>
-      <div class="bracket-games">
-        ${games.map(g => renderBracketGame(g, div)).join('')}
-      </div>
-    </div> `;
-}
-
-function renderBracketGame(game, div) {
-  const standings = div.standings;
-  const maxScore = 23;
-
-  if (game.isNA) return '';
-
-  const isPortalActive = !!TEAM_PORTAL;
-  const isMyGame = isPortalActive && (game.teamA?.id === TEAM_PORTAL.teamId || game.teamB?.id === TEAM_PORTAL.teamId);
-  const portalCls = isPortalActive ? (isMyGame ? ' portal-highlight' : ' portal-dim') : '';
-
-  const seedA = getSeed(game.teamA, standings);
-  const seedB = getSeed(game.teamB, standings);
-
-  const sba = seedA ? `<span class="seed-badge" > ${ seedA }</span> ` : '';
-  const sbb = seedB ? `<span class="seed-badge" > ${ seedB }</span> ` : '';
-
-  const na = (team) => team ? esc(team.name) : '<span class="bg-name tbd">TBD</span>';
-
-  /* BYE game */
-  if (game.isBye && game.winner) {
-    return `
-    <div class="bracket-game done${portalCls}" id = "bgc-${game.id}" >
-        <div class="bg-side">
-          ${sba}<span class="bg-name win">${na(game.teamA)}</span>
-        </div>
-        <div class="bg-center"><span class="pill pill-warn">BYE</span></div>
-        <div class="bg-side right">
-          <span class="bg-name tbd">—</span>
-        </div>
-      </div> `;
-  }
-
-  /* Completed game */
-  if (game.complete) {
-    const aWon = game.winner?.id === game.teamA?.id;
-    return `
-    <div class="bracket-game done" id = "bgc-${game.id}" >
-        <div class="bg-side">
-          ${sba}
-          <span class="bg-name ${aWon ? 'win' : 'loss'}">${na(game.teamA)}</span>
-        </div>
-        <div class="bg-center">
-          <div class="score-display">
-            <span style="color:${aWon ? 'var(--green)' : 'var(--red)'}">${game.scoreA}</span>
-            <span class="score-dash">–</span>
-            <span style="color:${!aWon ? 'var(--green)' : 'var(--red)'}">${game.scoreB}</span>
-          </div>
-        </div>
-        <div class="bg-side right">
-          <span class="bg-name ${!aWon ? 'win' : 'loss'}">${na(game.teamB)}</span>
-          ${sbb}
-        </div>
-        ${
-    isPortalActive ? '' : `<button class="btn btn-ghost btn-sm"
-                data-action="edit-bracket-score"
-                data-div="${div.id}" data-game-id="${game.id}">✏️</button>`
-  }
-      </div> `;
-  }
-
-  /* Pending game */
-  const canPlay = !!(game.teamA && game.teamB);
-  const cls     = canPlay ? 'live' : '';
-
-  return `
-    <div class="bracket-game ${cls}${portalCls}" id = "bgc-${game.id}" >
-      <div class="bg-side">
-        ${sba}
-        <span class="bg-name">${na(game.teamA)}</span>
-      </div>
-      <div class="bg-center score-entry">
-        <input type="number" class="score-input"
-               id="bs-${game.id}-a" min="0" max="${maxScore}" placeholder="–"
-               ${!canPlay || isPortalActive ? 'disabled' : ''}>
-        <span class="score-sep">vs</span>
-        <input type="number" class="score-input"
-               id="bs-${game.id}-b" min="0" max="${maxScore}" placeholder="–"
-               ${!canPlay || isPortalActive ? 'disabled' : ''}>
-        ${isPortalActive ? '' : `<button class="btn btn-primary btn-sm"
-                data-action="save-bracket-score"
-                data-div="${div.id}" data-game-id="${game.id}"
-                ${!canPlay ? 'disabled' : ''}>Save</button>`}
-      </div>
-      <div class="bg-side right">
-        <span class="bg-name">${na(game.teamB)}</span>
-        ${sbb}
-      </div>
-    </div>`;
-}
-
-/* =========================================================
-   BRACKET TREE (Classic Tournament Tree)
-   ========================================================= */
-
-function renderBracketTree(bracket, div) {
-  /* Determine round structure based on bracket type */
-  const hasQF = !!bracket.gameMap['qf_1'];
-  const hasSF = !!bracket.gameMap['sf_1'];
-
-  /* 2-team: no tree, just a single game card */
-  if (!hasSF) {
-    const g = bracket.gameMap['final_1'];
-    if (!g) return '';
-    return `<div class="bracket-games" > ${ renderBracketGame(g, div) }</div> `;
-  }
-
-  /* Build round definitions */
-  const rounds = [];
-  if (hasQF) {
-    rounds.push({ name: 'Quarterfinals', games: ['qf_1', 'qf_2', 'qf_3', 'qf_4'] });
-  }
-  rounds.push({ name: 'Semifinals', games: ['sf_1', 'sf_2'] });
-  rounds.push({ name: 'Championship', games: ['final_1'] });
-
-  /* Calculate tree height based on first round */
-  const firstRoundSize = rounds[0].games.length;
-  const treeHeight = Math.max(firstRoundSize * 85, 200);
-
-  /* Build the mobile scroll hint */
-  let html = `<div class="bracket-tree-scroll" > `;
-  html += `<div class="bracket-tree-hint" >← Swipe to see full bracket →</div> `;
-  html += `<div class="bracket-tree" style = "min-height:${treeHeight}px;" > `;
-
-  for (let r = 0; r < rounds.length; r++) {
-    const round = rounds[r];
-    const isLast = r === rounds.length - 1;
-
-    /* Round column */
-    html += `<div class="bt-round-col" > `;
-    html += `<div class="bt-round-header" > ${ round.name }</div> `;
-    html += `<div class="bt-round-body" > `;
-
-    for (const gid of round.games) {
-      const game = bracket.gameMap[gid];
-      if (game && !game.isNA) {
-        html += `<div class="bt-game-slot" > ${ renderBracketTreeCard(game, div) }</div> `;
-      } else {
-        html += `<div class="bt-game-slot bt-empty" > <div class="bt-game bt-na">—</div></div> `;
-      }
-    }
-
-    html += `</div></div> `; /* close bt-round-body + bt-round-col */
-
-    /* Connector column (between rounds, not after the last) */
-    if (!isLast) {
-      const numConnectors = Math.ceil(round.games.length / 2);
-      html += `<div class="bt-conn-col" > `;
-      html += `<div class="bt-conn-spacer" ></div> `;
-      html += `<div class="bt-conn-body" > `;
-      for (let c = 0; c < numConnectors; c++) {
-        html += `<div class="bt-conn" ></div> `;
-      }
-      html += `</div></div> `;
-    }
-  }
-
-  html += `</div></div> `; /* close bracket-tree + bracket-tree-scroll */
-  return html;
-}
-
-function renderBracketTreeCard(game, div) {
-  if (!game) return '<div class="bt-game bt-na">—</div>';
-
-  const standings = div.standings;
-  const isPortalActive = !!TEAM_PORTAL;
-  const isMyGame = isPortalActive && (game.teamA?.id === TEAM_PORTAL.teamId || game.teamB?.id === TEAM_PORTAL.teamId);
-  const portalCls = isPortalActive ? (isMyGame ? ' portal-highlight' : ' portal-dim') : '';
-
-  const seedA = getSeed(game.teamA, standings);
-  const seedB = getSeed(game.teamB, standings);
-  const sba = seedA ? `<span class="bt-seed" > ${ seedA }</span> ` : '';
-  const sbb = seedB ? `<span class="bt-seed" > ${ seedB }</span> ` : '';
-  const teamName = (t) => t ? esc(t.name) : '<span class="bt-team bt-tbd">TBD</span>';
-
-  /* BYE game */
-  if (game.isBye && game.winner) {
-    return `<div class="bt-game bt-bye${portalCls}" id="btg-${game.id}">
-      <div class="bt-game-row bt-winner-row">
-        ${sba}
-        <span class="bt-team bt-win">${teamName(game.teamA)}</span>
-        <span class="bt-bye-badge">BYE</span>
-      </div>
-      <div class="bt-game-row">
-        <span class="bt-team bt-tbd">—</span>
-      </div>
-    </div> `;
-  }
-
-  /* Completed game */
-  if (game.complete) {
-    const aWon = game.winner?.id === game.teamA?.id;
-    return `<div class="bt-game bt-done" id="btg-${game.id}">
-      <div class="bt-game-row ${aWon ? 'bt-winner-row' : ''}">
-        ${sba}
-        <span class="bt-team ${aWon ? 'bt-win' : 'bt-loss'}">${teamName(game.teamA)}</span>
-        <span class="bt-score" style="color:${aWon ? 'var(--green)' : 'var(--red)'}">${game.scoreA}</span>
-      </div>
-      <div class="bt-game-row ${!aWon ? 'bt-winner-row' : ''}">
-        ${sbb}
-        <span class="bt-team ${!aWon ? 'bt-win' : 'bt-loss'}">${teamName(game.teamB)}</span>
-        <span class="bt-score" style="color:${!aWon ? 'var(--green)' : 'var(--red)'}">${game.scoreB}</span>
-      </div>
-      ${
-    isPortalActive ? '' : `<button class="bt-edit-btn"
-              data-action="edit-bracket-score"
-              data-div="${div.id}" data-game-id="${game.id}">✏️</button>`
-  }
-    </div> `;
-  }
-
-  /* Pending game (with score inputs) */
-  const canPlay = !!(game.teamA && game.teamB);
-  const cls = canPlay ? 'bt-live' : '';
-
-  return `<div class="bt-game ${cls}${portalCls}" id="btg-${game.id}">
-    <div class="bt-game-row">
-      ${sba}
-      <span class="bt-team ${!game.teamA ? 'bt-tbd' : ''}">${teamName(game.teamA)}</span>
-      <input type="number" class="bt-score-input" id="bs-${game.id}-a"
-             min="0" max="23" placeholder="–" ${!canPlay || isPortalActive ? 'disabled' : ''}>
-    </div>
-    <div class="bt-game-row">
-      ${sbb}
-      <span class="bt-team ${!game.teamB ? 'bt-tbd' : ''}">${teamName(game.teamB)}</span>
-      <input type="number" class="bt-score-input" id="bs-${game.id}-b"
-             min="0" max="23" placeholder="–" ${!canPlay || isPortalActive ? 'disabled' : ''}>
-    </div>
-    ${
-    isPortalActive ? '' : `<button class="bt-save-btn"
-            data-action="save-bracket-score"
-            data-div="${div.id}" data-game-id="${game.id}"
-            ${!canPlay ? 'disabled' : ''}>Save Score</button>`
-  }
-  </div> `;
-}
-
-/* =========================================================
-   COMPLETE
-   ========================================================= */
-
-function renderComplete(div) {
-  const cfg     = DIV_CONFIG[div.id];
-  const rankings = div.finalRankings;
-
-  const cards = rankings.map(({ place, team }) => {
-    const idx   = place - 1;
-    const medal = MEDALS[idx]      ?? `${ place }.`;
-    const label = PLACE_NAMES[idx] ?? `${ place }th Place`;
-    const cls   = place <= 3 ? `p${ place } ` : '';
-    return `
-    <div class="ranking-card ${cls}" >
-        <div class="ranking-emoji">${medal}</div>
-        <div>
-          <div class="ranking-name">${esc(team.name)}</div>
-          <div class="ranking-place">${label}</div>
-        </div>
-      </div> `;
-  }).join('');
-
-  return `
-    <div class="complete-banner" >
-      <div class="trophy">🏆</div>
-      <h1>Tournament Complete!</h1>
-      <p>${cfg.icon} ${cfg.name} — Final Results</p>
-    </div>
-
-    <div class="rankings-grid">${cards}</div>
+    `).join('')}
 
     <div class="divider"></div>
-    <div class="section-title">Qualifying Standings</div>
-    ${ renderStandingsTable(div.standings) }
-
-  <div style="margin-top:24px;display:flex;justify-content:center;gap:12px;">
-    <button class="btn btn-secondary"
-      data-action="reset-division" data-div="${div.id}">
-      ↺ Reset This Division
-    </button>
-  </div>`;
+    ${renderStandings(standings)}
+  `;
 }
 
-/* =========================================================
-   EVENT BINDING
-   ========================================================= */
+function renderStandings(standings) {
+  if (!standings || !standings.length) return '';
 
-function bindEvents() {
-  const app = document.getElementById('app');
+  return `
+    <div class="section-title">Standings</div>
 
-  // Remove stale listeners by replacing node
-  const fresh = app.cloneNode(true);
-  app.parentNode.replaceChild(fresh, app);
-  const root = document.getElementById('app');
+    <div class="standings-wrap">
+      <table class="standings">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Team</th>
+            <th>W</th>
+            <th>L</th>
+            <th>Diff</th>
+            <th>PF</th>
+          </tr>
+        </thead>
 
-  root.addEventListener('click',   onAppClick);
-  root.addEventListener('keydown', onAppKeydown);
-  root.addEventListener('change',  onAppChange);
+        <tbody>
+          ${standings.map((s, i) => `
+            <tr>
+              <td><span class="rank-circle ${i < 3 ? `r${i + 1}` : ''}">${i + 1}</span></td>
+              <td>${esc(s.team.name)}</td>
+              <td>${s.wins}</td>
+              <td>${s.losses}</td>
+              <td>${s.diff}</td>
+              <td>${s.pf}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
-function onAppKeydown(e) {
-  if (e.key !== 'Enter') return;
-  const t = e.target;
-  
-  if (t.id === 'new-team-name') {
-    const btn = document.querySelector('[data-action="add-team"]');
-    if (btn) btn.click();
-    return;
+function renderPlayoffs(d) {
+  if (!d.bracket) {
+    return '<div class="empty-state"><div class="empty-title">No bracket generated yet</div></div>';
   }
-  if (t.dataset.action === 'edit-input') {
-    const btn = document.querySelector(`[data-action="save-edit"][data-team-id="${t.dataset.teamId}"]`);
-    if (btn) btn.click();
-    return;
-  }
-  if (t.classList.contains('roster-input')) {
-    const parts = t.id.split('-');
-    if (parts.length >= 4) {
-      const idx = parts.pop();
-      const teamId = parts.slice(2).join('-');
-      const btn = document.querySelector(`[data-action="add-player"][data-team-id="${teamId}"][data-player-idx="${idx}"]`);
-      if (btn) btn.click();
+
+  const complete = Tournament.isBracketComplete(d.bracket);
+
+  return `
+    <div class="action-bar">
+      <div class="action-bar-info">Playoffs · ${DIVS[d.id].name}</div>
+
+      <div class="action-bar-btns">
+        ${admin() ? `
+          <button class="btn btn-secondary btn-sm" data-action="back-qualifying" data-div="${d.id}">← Qualifying</button>
+          <button class="btn btn-primary btn-sm" data-action="finish" data-div="${d.id}" ${complete ? '' : 'disabled'}>Finish Tournament</button>
+        ` : ''}
+      </div>
+    </div>
+
+    ${renderBracket(d)}
+  `;
+}
+
+function renderBracket(d) {
+  const b = d.bracket;
+
+  const roundHtml = (round) => `
+    <div class="round-block">
+      <div class="round-header">
+        <span class="round-label">${esc(round.name)}</span>
+      </div>
+
+      <div class="games-grid">
+        ${round.gameIds.map((id) => renderGame(d, b.gameMap[id], 'bracket')).join('')}
+      </div>
+    </div>
+  `;
+
+  return `
+    ${(b.mainRounds || []).map(roundHtml).join('')}
+    ${(b.placementRounds || []).map(roundHtml).join('')}
+
+    ${b.extraGames
+      ? Object.values(b.extraGames).map((x) => `
+          <div class="round-block">
+            <div class="round-header">
+              <span class="round-label">${esc(x.label)}</span>
+            </div>
+
+            <div class="games-grid">
+              ${renderGame(d, b.gameMap[x.gameId], 'bracket')}
+            </div>
+          </div>
+        `).join('')
+      : ''
     }
-    return;
-  }
-  if (t.classList.contains('score-input')) {
-    const parts = t.id.split('-');
-    if (parts.length >= 3) {
-      const isQual = parts[0] === 'qs';
-      const isPlayoff = parts[0] === 'bs';
-      parts.shift();
-      parts.pop();
-      const gameId = parts.join('-');
-      const btnAction = isQual ? 'save-qual-score' : (isPlayoff ? 'save-bracket-score' : '');
-      if (btnAction) {
-        const btn = document.querySelector(`[data-action="${btnAction}"][data-game-id="${gameId}"]`);
-        if (btn) btn.click();
-      }
-    }
-    return;
-  }
+  `;
 }
 
-function onAppChange(e) {
-  const t = e.target;
-  if (t.dataset.action === 'set-rounds') {
-    const divId = t.dataset.div;
-    STATE.divisions[divId].qualifyingRoundsCount = parseInt(t.value, 10);
+function renderComplete(d) {
+  const rankings = d.finalRankings && d.finalRankings.length
+    ? d.finalRankings
+    : Tournament.getFinalRankings(d.bracket, d.teams, d.standings);
+
+  return `
+    <div class="card" style="text-align:center;margin-bottom:20px;">
+      <div style="font-size:48px;">🎉</div>
+      <div class="card-title">Tournament Complete</div>
+      <div class="card-sub">${DIVS[d.id].name}</div>
+    </div>
+
+    <div class="standings-wrap">
+      <table class="standings">
+        <thead>
+          <tr>
+            <th>Place</th>
+            <th>Team</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${rankings.map((r) => `
+            <tr>
+              <td><span class="rank-circle ${r.place <= 3 ? `r${r.place}` : ''}">${r.place}</span></td>
+              <td>${esc(r.team ? r.team.name : 'TBD')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    ${admin() ? `
+      <div style="margin-top:20px;">
+        <button class="btn btn-secondary" data-action="back-playoffs" data-div="${d.id}">← Back to Playoffs</button>
+        <button class="btn btn-danger" data-action="reset-division" data-div="${d.id}">Reset Division</button>
+      </div>
+    ` : ''}
+  `;
+}
+
+function handleScoreDraftInput(e) {
+  const input = e.target;
+
+  if (!input.classList.contains('score-input')) return;
+  if (!input.id) return;
+
+  SCORE_DRAFTS[input.id] = input.value;
+}
+
+function draftValue(inputId) {
+  return esc(SCORE_DRAFTS[inputId] ?? '');
+}
+
+function clearScoreDraft(prefix, gameId) {
+  delete SCORE_DRAFTS[`${prefix}-${gameId}-a`];
+  delete SCORE_DRAFTS[`${prefix}-${gameId}-b`];
+}
+
+function renderGame(d, g, type) {
+  if (!g) return '';
+
+  if (g.isNA) {
+    return '<div class="game-card na-card"><div class="gt tbd">Not needed</div></div>';
+  }
+
+  if (g.isBye) {
+    return `
+      <div class="game-card bye-card">
+        <div class="gt win">${esc(g.winner ? g.winner.name : 'Bye')}</div>
+        <span class="pill pill-warn">Bye</span>
+      </div>
+    `;
+  }
+
+  const prefix = type === 'bracket' ? 'bs' : 'qs';
+  const save = type === 'bracket' ? 'save-bracket-score' : 'save-qual-score';
+  const edit = type === 'bracket' ? 'edit-bracket-score' : 'edit-qual-score';
+  const ready = g.teamA && g.teamB;
+  const myGame = TEAM_PORTAL &&
+    ((g.teamA && g.teamA.id === TEAM_PORTAL.teamId) ||
+      (g.teamB && g.teamB.id === TEAM_PORTAL.teamId));
+
+  const seedA = type === 'bracket' ? seedOf(g.teamA, d.standings) : null;
+  const seedB = type === 'bracket' ? seedOf(g.teamB, d.standings) : null;
+  const a = g.teamA ? esc(g.teamA.name) : 'TBD';
+  const b = g.teamB ? esc(g.teamB.name) : 'TBD';
+
+  if (g.complete) {
+    const aWin = g.winner && g.teamA && g.winner.id === g.teamA.id;
+    const bWin = g.winner && g.teamB && g.winner.id === g.teamB.id;
+
+    return `
+      <div class="game-card done ${myGame ? 'live' : ''}">
+        <div class="gt ${aWin ? 'win' : 'loss'}">
+          ${seedA ? `<span class="seed-badge">${seedA}</span> ` : ''}${a}
+        </div>
+
+        <div class="score-display">
+          ${g.scoreA}<span class="score-dash">-</span>${g.scoreB}
+        </div>
+
+        <div class="gt ${bWin ? 'win' : 'loss'}" style="text-align:right;">
+          ${b}${seedB ? ` <span class="seed-badge">${seedB}</span>` : ''}
+        </div>
+
+        ${admin() ? `<button class="btn btn-ghost btn-sm" data-action="${edit}" data-div="${d.id}" data-game-id="${g.id}">Edit</button>` : ''}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="game-card ${ready ? '' : 'na-card'} ${myGame ? 'live' : ''}">
+      <div class="gt ${g.teamA ? '' : 'tbd'}" title="${a}">
+        ${seedA ? `<span class="seed-badge">${seedA}</span> ` : ''}${a}
+      </div>
+
+      ${canEnterScores() && ready ? `
+        <div class="score-entry">
+
+        <input
+          class="score-input"
+          id="${prefix}-${g.id}-a"
+          type="number"
+          min="0"
+          max="23"
+          placeholder="0"
+          value="${draftValue(`${prefix}-${g.id}-a`)}"
+        >
+        <span class="score-sep">-</span>
+        <input
+          class="score-input"
+          id="${prefix}-${g.id}-b"
+          type="number"
+          min="0"
+          max="23"
+          placeholder="0"
+          value="${draftValue(`${prefix}-${g.id}-b`)}"
+        >
+          <button class="btn btn-primary btn-sm" data-action="${save}" data-div="${d.id}" data-game-id="${g.id}">Save</button>
+        </div>
+      ` : '<span class="score-dash">vs</span>'}
+
+      <div class="gt ${g.teamB ? '' : 'tbd'}" title="${b}" style="text-align:right;">
+        ${b}${seedB ? ` <span class="seed-badge">${seedB}</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function handleClick(e) {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+
+  e.preventDefault();
+
+  const a = el.dataset.action;
+  const divId = el.dataset.div;
+  const teamId = el.dataset.teamId;
+  const gameId = el.dataset.gameId;
+  const faId = el.dataset.faId;
+
+  console.log('Clicked action:', a, { divId, teamId, gameId, faId });
+
+  if (a === 'main-menu') {
+    HAS_ENTERED = false;
+    ENTRY_MODE = 'start';
+    TEAM_PORTAL = null;
+    IS_ORGANIZER = false;
+    renderApp();
+    return;
+  }
+
+
+  if (a === 'entry-back') {
+    ENTRY_MODE = 'start';
+    renderApp();
+    return;
+  }
+
+  if (a === 'entry-organizer') {
+    HAS_ENTERED = true;
+    TEAM_PORTAL = null;
+    IS_ORGANIZER = true;
+    STATE.activePage = 'division';
+    renderApp();
+    return;
+  }
+
+  if (a === 'entry-register') {
+    ENTRY_MODE = 'register';
+    renderApp();
+    return;
+  }
+
+  if (a === 'entry-register-division') return registerTeamFromEntry(divId);
+  if (a === 'entry-view-team') return teamLogin(true);
+
+  if (a === 'entry-free-agent') {
+    HAS_ENTERED = true;
+    TEAM_PORTAL = null;
+    IS_ORGANIZER = false;
+    STATE.activePage = 'teams';
+    STATE.teamsSubTab = 'freeAgents';
+    renderApp();
+    return;
+  }
+
+  if (a === 'tab') {
+    STATE.activePage = 'division';
+    STATE.activeTab = divId;
+    renderApp();
+    return;
+  }
+
+  if (a === 'tab-teams') {
+    STATE.activePage = 'teams';
+    renderApp();
+    return;
+  }
+
+  if (a === 'teams-sub-tab') {
+    STATE.teamsSubTab = el.dataset.sub || 'teams';
+    renderApp();
+    return;
+  }
+
+  if (a === 'team-login') return teamLogin(false);
+
+  if (a === 'exit-team-view') {
+    TEAM_PORTAL = null;
+    IS_ORGANIZER = false;
+    toast('Exited team view', 'info');
+    renderApp();
+    return;
+  }
+
+  if (a === 'login-as-team') return loginAsTeam(divId, teamId);
+  if (a === 'reset-all') return resetAll();
+  if (a === 'reset-division') return resetDivision(divId);
+  if (a === 'add-team') return addTeam(divId, 'new-team-name');
+  if (a === 'edit-team-name') return editTeamName(divId, teamId);
+  if (a === 'add-team-from-teams') return addTeam($('teams-add-div')?.value || 'beginner', 'teams-add-name');
+  if (a === 'delete-team') return deleteTeam(divId, teamId);
+  if (a === 'clear-teams') return clearTeams(divId);
+  if (a === 'set-rounds') return setRounds(divId);
+  if (a === 'toggle-roster') return toggleRoster(divId, teamId);
+  if (a === 'add-player') return addPlayer(divId, teamId, Number(el.dataset.playerIdx));
+  if (a === 'remove-player') return removePlayer(divId, teamId, Number(el.dataset.playerIdx));
+  if (a === 'add-free-agent') return addFreeAgent();
+  if (a === 'delete-free-agent') return deleteFreeAgent(faId);
+  if (a === 'start-tournament') return startTournament(divId);
+  if (a === 'back-registration') return backRegistration(divId);
+  if (a === 'save-qual-score') return saveQualScore(divId, gameId);
+  if (a === 'edit-qual-score') return editQualScore(divId, gameId);
+  if (a === 'generate-playoffs') return generatePlayoffs(divId);
+  if (a === 'back-qualifying') return backQualifying(divId);
+  if (a === 'save-bracket-score') return saveBracketScore(divId, gameId);
+  if (a === 'edit-bracket-score') return editBracketScore(divId, gameId);
+  if (a === 'finish') return finishTournament(divId);
+
+  if (a === 'back-playoffs') {
+    STATE.divisions[divId].phase = 'playoffs';
     saveState();
     renderApp();
-  }
-}
-
-function onAppClick(e) {
-  const btn = e.target.closest('[data-action]');
-  if (!btn) return;
-
-  const action = btn.dataset.action;
-  if (action === 'noop') return;
-  const divId  = btn.dataset.div;
-
-  switch (action) {
-
-    /* ── Entry flow ── */
-    case 'entry-view-team':
-      HAS_ENTERED = true;
-      STATE.activePage = 'teams';
-      renderApp();
-      break;
-    case 'entry-register-choice':
-      ENTRY_MODE = 'register_choice';
-      renderApp();
-      break;
-    case 'entry-reg-div':
-      HAS_ENTERED = true;
-      STATE.activePage = 'division';
-      STATE.activeTab = divId;
-      renderApp();
-      setTimeout(() => {
-        const inp = document.getElementById('new-team-name');
-        if (inp) inp.focus();
-      }, 100);
-      break;
-    case 'entry-back':
-      ENTRY_MODE = 'start';
-      renderApp();
-      break;
-    case 'entry-organizer':
-      HAS_ENTERED = true;
-      renderApp();
-      break;
-      
-    case 'entry-free-agent':
-      HAS_ENTERED = true;
-      STATE.activePage = 'teams';
-      STATE.teamsSubTab = 'freeAgents';
-      renderApp();
-      break;
-      
-    case 'login-as-team':
-      const targetTeam = STATE.divisions[divId].teams.find(t => t.id === btn.dataset.teamId);
-      if (targetTeam) {
-        TEAM_PORTAL = { teamId: targetTeam.id, divId: divId, teamName: targetTeam.name };
-        HAS_ENTERED = true;
-        STATE.activePage = 'division';
-        STATE.activeTab = divId;
-        saveState(); renderApp();
-        toast(`Logged in as ${ targetTeam.name } `, 'ok');
-      }
-      break;
-
-    /* ── Tabs & global reset ── */
-    case 'tab':
-      STATE.activePage = 'division';
-      STATE.activeTab = divId;
-      saveState(); renderApp();
-      break;
-
-    case 'tab-teams':
-      STATE.activePage = 'teams';
-      saveState(); renderApp();
-      break;
-      
-    case 'teams-sub-tab':
-      STATE.teamsSubTab = btn.dataset.sub;
-      saveState(); renderApp();
-      break;
-      
-    case 'add-team-from-teams':
-      handleAddTeamFromTeams();
-      break;
-      
-    case 'add-free-agent':
-      handleAddFreeAgent();
-      break;
-      
-    case 'delete-free-agent':
-      handleDeleteFreeAgent(btn.dataset.faId);
-      break;
-      
-    case 'team-login':
-      handleTeamLogin();
-      break;
-
-    case 'reset-all':
-      if (confirm('Reset ALL tournament data for both divisions?\nThis cannot be undone.')) {
-        STATE = { activeTab: STATE.activeTab,
-                  divisions: { beginner: freshDivision('beginner'), competitive: freshDivision('competitive') } };
-        saveState(); renderApp();
-        toast('All data reset', 'info');
-      }
-      break;
-
-    /* ── Registration ── */
-    case 'add-team':      handleAddTeam(divId);      break;
-    case 'add-test':      handleAddTest(divId);       break;
-    case 'clear-teams':   handleClearTeams(divId);    break;
-    case 'edit-team':
-      STATE.divisions[divId].editingTeamId = btn.dataset.teamId;
-      saveState(); renderApp();
-      setTimeout(() => {
-        const inp = document.getElementById(`edit-input-${btn.dataset.teamId}`);
-        if (inp) { inp.focus(); inp.select(); }
-      }, 30);
-      break;
-
-    case 'save-edit':     handleSaveEdit(divId, btn.dataset.teamId);   break;
-    case 'cancel-edit':
-      STATE.divisions[divId].editingTeamId = null;
-      renderApp();
-      break;
-
-    case 'delete-team': {
-      const teamIdToDelete = btn.dataset.teamId;
-      const targetDivId = divId || STATE.activeTab;
-      if (!confirm('Are you sure you want to delete this team?')) return;
-      const divData = STATE.divisions[targetDivId];
-      if (divData) {
-        const before = divData.teams.length;
-        divData.teams = divData.teams.filter(t => (t.id || '').trim() !== (teamIdToDelete || '').trim());
-        if (divData.teams.length < before) {
-          toast('Team deleted', 'ok');
-        }
-        saveState(); renderApp();
-      }
-      break;
-    }
-
-    case 'toggle-roster':
-      STATE.divisions[divId].expandedRosterId = 
-        STATE.divisions[divId].expandedRosterId === btn.dataset.teamId ? null : btn.dataset.teamId;
-      saveState(); renderApp();
-      break;
-
-    case 'add-player':
-      handleAddPlayer(divId, btn.dataset.teamId, btn.dataset.playerIdx);
-      break;
-
-    case 'remove-player':
-      handleRemovePlayer(divId, btn.dataset.teamId, btn.dataset.playerIdx);
-      break;
-
-    case 'start-tournament': handleStartTournament(divId);  break;
-
-    /* ── Qualifying ── */
-    case 'save-qual-score':  handleSaveQualScore(divId, btn.dataset.gameId);   break;
-    case 'edit-qual-score':  handleEditQualScore(divId, btn.dataset.gameId);   break;
-    case 'gen-playoffs':     handleGenPlayoffs(divId);                         break;
-
-    /* ── Bracket ── */
-    case 'save-bracket-score':  handleSaveBracketScore(divId, btn.dataset.gameId);  break;
-    case 'edit-bracket-score':  handleEditBracketScore(divId, btn.dataset.gameId);  break;
-    case 'finish-tournament':   handleFinishTournament(divId);                      break;
-
-    /* ── Complete ── */
-    case 'reset-division':
-      if (confirm(`Reset the ${ DIV_CONFIG[divId].name } division ? This cannot be undone.`)) {
-        STATE.divisions[divId] = freshDivision(divId);
-        saveState(); renderApp();
-        toast(`${ DIV_CONFIG[divId].name } reset`, 'info');
-      }
-      break;
-  }
-}
-
-/* =========================================================
-   ACTION HANDLERS
-   ========================================================= */
-
-/* ── Free Agents & Teams Page Handlers ── */
-
-function handleAddTeamFromTeams() {
-  const divSelect = document.getElementById('teams-add-div');
-  const nameInput = document.getElementById('teams-add-name');
-  if (!divSelect || !nameInput) return;
-
-  const divId = divSelect.value;
-  const name = nameInput.value.trim();
-  if (!name) { toast('Enter a team name first', 'err'); return; }
-
-  const div = STATE.divisions[divId];
-  if (div.phase !== 'registration') {
-    toast(`Registration is closed for ${DIV_CONFIG[divId].name}.`, 'err');
-    return;
-  }
-  
-  if (div.teams.find(t => t.name.toLowerCase() === name.toLowerCase())) {
-    toast('Team name already exists in this division.', 'err');
     return;
   }
 
-  div.teams.push({ id: nextTeamId(div), name, players: [] });
-  saveState(); renderApp();
-  
-  setTimeout(() => { const i = document.getElementById('teams-add-name'); if (i) i.focus(); }, 30);
-  toast(`"${name}" added to ${DIV_CONFIG[divId].name}`, 'ok');
+  console.warn('Unhandled action:', a);
 }
 
-function handleAddFreeAgent() {
-  const nameInput = document.getElementById('fa-name');
-  if (!nameInput) return;
-  const name = nameInput.value.trim();
-  
-  if (!name) { toast('Please enter your name.', 'err'); return; }
+function handleKeydown(e) {
+  if (e.key !== 'Enter') return;
 
-  const formats = [];
-  if (document.getElementById('fa-fmt-beginner')?.checked) formats.push('beginner');
-  if (document.getElementById('fa-fmt-competitive')?.checked) formats.push('competitive');
-  
-  if (formats.length === 0) { toast('Select at least one preferred format.', 'err'); return; }
+  if (e.target.id === 'new-team-name') {
+    addTeam(STATE.activeTab, 'new-team-name');
+  }
 
-  if (!STATE.freeAgents) STATE.freeAgents = [];
-  if (!STATE.freeAgentIdCounter) STATE.freeAgentIdCounter = 0;
-  
-  STATE.freeAgentIdCounter++;
-  const newFa = {
-    id: `fa_${STATE.freeAgentIdCounter}`,
-    name: name,
-    formats: formats
+  if (e.target.id === 'teams-add-name') {
+    addTeam($('teams-add-div')?.value || 'beginner', 'teams-add-name');
+  }
+
+  if (e.target.id === 'fa-name') {
+    addFreeAgent();
+  }
+}
+
+function resetAll() {
+  if (!admin()) return;
+
+  if (!confirm('Reset the entire tournament? This cannot be undone.')) return;
+
+  TEAM_PORTAL = null;
+  IS_ORGANIZER = true;
+
+  STATE = {
+    activeTab: 'beginner',
+    activePage: 'division',
+    teamsSubTab: 'teams',
+    freeAgents: [],
+    freeAgentIdCounter: 0,
+    divisions: {
+      beginner: freshDivision('beginner'),
+      competitive: freshDivision('competitive'),
+    },
   };
-  
-  STATE.freeAgents.push(newFa);
-  saveState(); renderApp();
-  toast('You are signed up as a Free Agent! 🎉', 'ok');
+
+  saveState();
+  renderApp();
+  toast('Tournament reset', 'ok');
 }
 
-function handleDeleteFreeAgent(faId) {
-  if (!confirm('Are you sure you want to remove this free agent?')) return;
-  
-  if (STATE.freeAgents) {
-    STATE.freeAgents = STATE.freeAgents.filter(fa => fa.id !== faId);
-    saveState(); renderApp();
-    toast('Free agent removed', 'ok');
+function resetDivision(divId) {
+  if (!admin() || !confirm(`Reset ${DIVS[divId].name}?`)) return;
+
+  STATE.divisions[divId] = freshDivision(divId);
+
+  saveState();
+  renderApp();
+  toast('Division reset', 'ok');
+}
+
+function addTeam(divId, inputId) {
+  if (!admin()) return;
+
+  const input = $(inputId);
+  const name = input ? input.value.trim() : '';
+
+  if (!name) {
+    toast('Enter a team name first', 'err');
+    return;
   }
-}
 
-/* ── Registration ── */
+  const d = STATE.divisions[divId];
 
-function handleAddTeam(divId) {
-  const inp  = document.getElementById('new-team-name');
-  const name = inp ? inp.value.trim() : '';
-  if (!name) { toast('Enter a team name first', 'err'); return; }
+  if (d.phase !== 'registration') {
+    toast('Registration is closed for this division', 'err');
+    return;
+  }
 
-  const div = STATE.divisions[divId];
-  div.teams.push({ id: nextTeamId(div), name, players: [] });
-  saveState(); renderApp();
-  setTimeout(() => { const i = document.getElementById('new-team-name'); if (i) i.focus(); }, 30);
-  toast(`"${name}" added`, 'ok');
-}
+  if (d.teams.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
+    toast('That team name already exists', 'err');
+    return;
+  }
 
-function handleAddTest(divId) {
-  const div   = STATE.divisions[divId];
-  const testData = TEST_TEAMS[divId] || TEST_TEAMS.beginner;
-  testData.forEach(tData => {
-    if (!div.teams.find(t => t.name === tData.name))
-      div.teams.push({ id: nextTeamId(div), name: tData.name, players: [...(tData.players || [])] });
+  d.teams.push({
+    id: nextTeamId(d),
+    name,
+    players: [],
   });
-  saveState(); renderApp();
-  toast('Test teams added', 'ok');
+
+  saveState();
+  renderApp();
+  toast(`Added ${name}`, 'ok');
 }
 
-function handleClearTeams(divId) {
-  if (!confirm('Remove all teams from this division?')) return;
-  const div = STATE.divisions[divId];
-  div.teams = []; div.teamIdCounter = 0;
-  saveState(); renderApp();
-}
+function deleteTeam(divId, teamId) {
+  if (!canManageTeam(divId, teamId)) return;
 
-function handleSaveEdit(divId, teamId) {
-  const inp  = document.getElementById(`edit-input-${teamId}`);
-  const name = inp ? inp.value.trim() : '';
-  if (!name) { toast('Name cannot be empty', 'err'); return; }
-  const team = STATE.divisions[divId].teams.find(t => t.id === teamId);
-  if (team) team.name = name;
-  STATE.divisions[divId].editingTeamId = null;
-  saveState(); renderApp();
-}
+  const d = STATE.divisions[divId];
+  const t = findTeam(divId, teamId);
 
-function handleAddPlayer(divId, teamId, playerIdx) {
-  const inp = document.getElementById(`new-player-${teamId}-${playerIdx}`);
-  const name = inp ? inp.value.trim() : '';
-  if (!name) return;
-  const team = STATE.divisions[divId].teams.find(t => t.id === teamId);
-  if (team) {
-    team.players = team.players || [];
-    team.players[playerIdx] = name;
+  if (!t) {
+    toast('Team not found', 'err');
+    return;
   }
-  saveState(); renderApp();
-}
 
-function handleRemovePlayer(divId, teamId, playerIdx) {
-  const team = STATE.divisions[divId].teams.find(t => t.id === teamId);
-  if (team && team.players) {
-    team.players[playerIdx] = null;
+  // Teams should only be able to delete themselves during registration.
+  // Organizer can delete later, but it resets the division.
+  if (!admin() && d.phase !== 'registration') {
+    toast('Teams can only delete themselves during registration', 'err');
+    return;
   }
-  saveState(); renderApp();
-}
 
-function handleTeamLogin(fromEntry = false) {
-  if (TEAM_PORTAL && !fromEntry) {
-    // Log out
+  let msg = `Delete "${t.name}"?`;
+
+  if (admin() && d.phase !== 'registration') {
+    msg += '\n\nThis will reset this division back to registration so deleted teams are not kept in old games.';
+  }
+
+  if (!confirm(msg)) return;
+
+  d.teams = d.teams.filter((x) => String(x.id) !== String(teamId));
+
+  if (admin() && d.phase !== 'registration') {
+    resetGeneratedData(d);
+  }
+
+  if (d.expandedTeamId === teamId) {
+    d.expandedTeamId = null;
+  }
+
+  if (TEAM_PORTAL && TEAM_PORTAL.divId === divId && TEAM_PORTAL.teamId === teamId) {
     TEAM_PORTAL = null;
-    toast('Exited Team View', 'info');
+    IS_ORGANIZER = false;
+  }
+
+  saveState();
+  renderApp();
+  toast('Team deleted', 'ok');
+}
+
+function editTeamName(divId, teamId) {
+  if (!canManageTeam(divId, teamId)) return;
+
+  const d = STATE.divisions[divId];
+  const t = findTeam(divId, teamId);
+
+  if (!t) {
+    toast('Team not found', 'err');
+    return;
+  }
+
+  // Teams can rename themselves during registration.
+  // Organizer can rename at any point.
+  if (!admin() && d.phase !== 'registration') {
+    toast('Teams can only edit their name during registration', 'err');
+    return;
+  }
+
+  const name = prompt('Edit team name:', t.name);
+
+  if (!name || !name.trim()) return;
+
+  const clean = name.trim();
+
+  if (d.teams.some((x) =>
+    String(x.id) !== String(teamId) &&
+    x.name.toLowerCase() === clean.toLowerCase()
+  )) {
+    toast('That team name already exists', 'err');
+    return;
+  }
+
+  t.name = clean;
+
+  if (TEAM_PORTAL && TEAM_PORTAL.divId === divId && TEAM_PORTAL.teamId === teamId) {
+    TEAM_PORTAL.teamName = clean;
+  }
+
+  saveState();
+  renderApp();
+  toast('Team name updated', 'ok');
+}
+
+function clearTeams(divId) {
+  if (!admin() || !confirm(`Remove all teams from ${DIVS[divId].name}?`)) return;
+
+  STATE.divisions[divId] = freshDivision(divId);
+
+  saveState();
+  renderApp();
+  toast('Teams cleared', 'ok');
+}
+
+function setRounds(divId) {
+  if (!admin()) return;
+
+  const n = Math.max(1, Math.min(10, Number($('qual-round-count')?.value) || 3));
+  STATE.divisions[divId].qualifyingRoundsCount = n;
+
+  saveState();
+  renderApp();
+  toast(`Rounds set to ${n}`, 'ok');
+}
+
+function toggleRoster(divId, teamId) {
+  const d = STATE.divisions[divId];
+  d.expandedTeamId = d.expandedTeamId === teamId ? null : teamId;
+  renderApp();
+}
+
+function addPlayer(divId, teamId, idx) {
+  const t = findTeam(divId, teamId);
+  const canEdit = admin() || (TEAM_PORTAL && TEAM_PORTAL.divId === divId && TEAM_PORTAL.teamId === teamId);
+
+  if (!t || !canEdit) return;
+
+  const name = $(`player-${teamId}-${idx}`)?.value.trim();
+
+  if (!name) return;
+
+  t.players[idx] = name;
+  t.players = t.players.filter(Boolean);
+
+  saveState();
+  renderApp();
+  toast('Player added', 'ok');
+}
+
+function removePlayer(divId, teamId, idx) {
+  const t = findTeam(divId, teamId);
+  const canEdit = admin() || (TEAM_PORTAL && TEAM_PORTAL.divId === divId && TEAM_PORTAL.teamId === teamId);
+
+  if (!t || !canEdit) return;
+
+  t.players.splice(idx, 1);
+
+  saveState();
+  renderApp();
+  toast('Player removed', 'ok');
+}
+
+function addFreeAgent() {
+  const name = $('fa-name')?.value.trim();
+  const formats = [];
+
+  if ($('fa-fmt-beginner')?.checked) formats.push('beginner');
+  if ($('fa-fmt-competitive')?.checked) formats.push('competitive');
+
+  if (!name) {
+    toast('Enter your name first', 'err');
+    return;
+  }
+
+  if (!formats.length) {
+    toast('Select at least one format', 'err');
+    return;
+  }
+
+  STATE.freeAgents.push({
+    id: nextFreeAgentId(),
+    name,
+    formats,
+  });
+
+  saveState();
+  renderApp();
+  toast('Free agent added', 'ok');
+}
+
+function deleteFreeAgent(faId) {
+  if (!admin() || !confirm('Remove this free agent?')) return;
+
+  STATE.freeAgents = STATE.freeAgents.filter((fa) => String(fa.id) !== String(faId));
+
+  saveState();
+  renderApp();
+  toast('Free agent removed', 'ok');
+}
+
+function allTeams() {
+  return Object.keys(STATE.divisions).flatMap((divId) =>
+    STATE.divisions[divId].teams.map((team) => ({ divId, team })),
+  );
+}
+
+function teamLogin(fromEntry) {
+  if (TEAM_PORTAL && !fromEntry) {
+    TEAM_PORTAL = null;
+    IS_ORGANIZER = false;
+    toast('Exited team view', 'info');
     renderApp();
     return;
   }
-  
-  const searchName = prompt('Enter your team name to view your schedule:');
-  if (!searchName || !searchName.trim()) return;
-  
-  const q = searchName.trim().toLowerCase();
-  
-  // Search across all divisions
-  for (const divId in STATE.divisions) {
-    const div = STATE.divisions[divId];
-    const team = div.teams.find(t => t.name.toLowerCase() === q);
-    if (team) {
-      TEAM_PORTAL = { teamId: team.id, divId: divId, teamName: team.name };
-      if (fromEntry) HAS_ENTERED = true;
-      // Switch to their division automatically
-      STATE.activePage = 'division';
-      STATE.activeTab = divId;
-      toast(`Logged in as ${ team.name } `, 'ok');
-      renderApp();
-      return;
-    }
+
+  if (!allTeams().length) {
+    toast('No teams are registered yet', 'err');
+    return;
   }
-  
-  toast('Team not found. Check spelling?', 'err');
+
+  const q = prompt('Enter your team name:');
+
+  if (!q || !q.trim()) return;
+
+  const text = q.trim().toLowerCase();
+
+  let matches = allTeams().filter(({ team }) => team.name.toLowerCase() === text);
+
+  if (!matches.length) {
+    matches = allTeams().filter(({ team }) => team.name.toLowerCase().includes(text));
+  }
+
+  if (matches.length === 1) {
+    loginAsTeam(matches[0].divId, matches[0].team.id);
+    return;
+  }
+
+  if (matches.length > 1) {
+    toast('Multiple teams match. Type the full team name.', 'err');
+    return;
+  }
+
+  toast('Team not found. Check spelling.', 'err');
 }
 
-function handleEntryRegisterTeam() {
-  const divName = prompt('Enter division (1 for Beginner 4s, 2 for Competitive 2s):');
-  if (divName !== '1' && divName !== '2') return;
-  const divId = divName === '1' ? 'beginner' : 'competitive';
-  const name = prompt('Enter your Team Name:');
-  if (!name || !name.trim()) return;
-  
-  const div = STATE.divisions[divId];
-  if (div.phase !== 'registration') {
-    toast('Registration is closed for this division.', 'err');
-    return;
-  }
-  
-  // Check for duplicate
-  if (div.teams.find(t => t.name.toLowerCase() === name.trim().toLowerCase())) {
-    toast('Team name already exists in this division.', 'err');
-    return;
-  }
-  
-  const t = { id: nextTeamId(div), name: name.trim(), players: [] };
-  div.teams.push(t);
-  
+function loginAsTeam(divId, teamId) {
+  const t = findTeam(divId, teamId);
+
+  if (!t) return;
+
+  TEAM_PORTAL = {
+    divId,
+    teamId: t.id,
+    teamName: t.name,
+  };
+
+  IS_ORGANIZER = false;
   HAS_ENTERED = true;
-  TEAM_PORTAL = { teamId: t.id, divId, teamName: t.name };
   STATE.activePage = 'division';
   STATE.activeTab = divId;
-  saveState(); renderApp();
-  toast(`Registered and logged in as ${ t.name } `, 'ok');
-  
-  // Optional: Auto-expand roster editor for them to add players
-  setTimeout(() => {
-    const btn = document.querySelector(`[data-action="toggle-roster"][data-team-id="${t.id}"]`);
-    if (btn) btn.click();
-  }, 100);
+
+  renderApp();
+  toast(`Viewing as ${t.name}`, 'ok');
 }
 
-function handleStartTournament(divId) {
-  const div = STATE.divisions[divId];
-  if (div.teams.length < 2) { toast('Need at least 2 teams', 'err'); return; }
-  div.phase            = 'qualifying';
-  const roundsCount    = div.qualifyingRoundsCount || 3;
-  div.qualifyingRounds = Tournament.generateQualifyingRounds(div.teams, roundsCount);
-  div.editingTeamId    = null;
-  saveState(); renderApp();
-  toast('Tournament started — qualifying schedule generated!', 'ok');
+function registerTeamFromEntry(divId) {
+  const d = STATE.divisions[divId];
+
+  if (!d) {
+    toast('Division not found', 'err');
+    return;
+  }
+
+  if (d.phase !== 'registration') {
+    toast('Registration is closed', 'err');
+    return;
+  }
+
+  const name = prompt(`Enter your team name for ${DIVS[divId].name}:`);
+
+  if (!name || !name.trim()) return;
+
+  const clean = name.trim();
+
+  if (d.teams.some((t) => t.name.toLowerCase() === clean.toLowerCase())) {
+    toast('That team already exists', 'err');
+    return;
+  }
+
+  const t = {
+    id: nextTeamId(d),
+    name: clean,
+    players: [],
+  };
+
+  d.teams.push(t);
+  d.expandedTeamId = t.id;
+
+  TEAM_PORTAL = {
+    divId,
+    teamId: t.id,
+    teamName: t.name,
+  };
+
+  IS_ORGANIZER = false;
+  HAS_ENTERED = true;
+  ENTRY_MODE = 'start';
+
+  STATE.activePage = 'division';
+  STATE.activeTab = divId;
+
+  // Render immediately so the user leaves the Select Division screen
+  renderApp();
+  toast(`Registered ${t.name}`, 'ok');
+
+  // Then save to localStorage/Firebase
+  saveState();
 }
 
-/* ── Qualifying ── */
+function startTournament(divId) {
+  if (!admin()) return;
 
-function handleSaveQualScore(divId, gameId) {
-  const div = STATE.divisions[divId];
-  const sA = parseInt(document.getElementById(`qs-${gameId}-a`)?.value, 10);
-  const sB = parseInt(document.getElementById(`qs-${gameId}-b`)?.value, 10);
-  const err = Tournament.validateScore(sA, sB);
-  if (err) { toast(err, 'err'); return; }
-  for (const round of div.qualifyingRounds) {
-    const g = round.games.find(g => g.id === gameId);
+  const d = STATE.divisions[divId];
+
+  if (d.teams.length < 2) {
+    toast('Need at least 2 teams', 'err');
+    return;
+  }
+
+  d.phase = 'qualifying';
+  d.qualifyingRounds = Tournament.generateQualifyingRounds(d.teams, d.qualifyingRoundsCount || 3);
+  d.standings = [];
+  d.bracket = null;
+  d.finalRankings = [];
+
+  saveState();
+  renderApp();
+  toast('Tournament started', 'ok');
+}
+
+function backRegistration(divId) {
+  if (!admin() || !confirm('Go back to registration? Scores and bracket will be cleared.')) return;
+
+  resetGeneratedData(STATE.divisions[divId]);
+
+  saveState();
+  renderApp();
+}
+
+function saveQualScore(divId, gameId) {
+  if (!canEnterScores()) return;
+
+  const d = STATE.divisions[divId];
+  const a = Number($(`qs-${gameId}-a`)?.value);
+  const b = Number($(`qs-${gameId}-b`)?.value);
+  const err = Tournament.validateScore(a, b);
+
+  if (err) {
+    toast(err, 'err');
+    return;
+  }
+
+  for (const r of d.qualifyingRounds) {
+    const g = r.games.find((x) => x.id === gameId);
+
     if (g) {
-      g.scoreA = sA; g.scoreB = sB; g.complete = true;
-      g.winner = sA > sB ? g.teamA : g.teamB;
-      g.loser  = sA > sB ? g.teamB : g.teamA;
+      g.scoreA = a;
+      g.scoreB = b;
+      g.complete = true;
+      g.winner = a > b ? g.teamA : g.teamB;
+      g.loser = a > b ? g.teamB : g.teamA;
       break;
     }
   }
-  saveState(); renderApp();
+  clearScoreDraft('qs', gameId);
+
+  saveState();
+  renderApp();
   toast('Score saved', 'ok');
 }
 
-function handleEditQualScore(divId, gameId) {
-  const div = STATE.divisions[divId];
-  for (const round of div.qualifyingRounds) {
-    const g = round.games.find(g => g.id === gameId);
+function editQualScore(divId, gameId) {
+  if (!admin()) return;
+
+  const d = STATE.divisions[divId];
+
+  for (const r of d.qualifyingRounds) {
+    const g = r.games.find((x) => x.id === gameId);
+
     if (g) {
-      g.scoreA = null; g.scoreB = null;
-      g.complete = false; g.winner = null; g.loser = null;
+      g.scoreA = null;
+      g.scoreB = null;
+      g.complete = false;
+      g.winner = null;
+      g.loser = null;
       break;
     }
   }
-  saveState(); renderApp();
+
+  saveState();
+  renderApp();
 }
 
-function handleGenPlayoffs(divId) {
-  const div = STATE.divisions[divId];
-  if (!allQualComplete(div)) { toast('All qualifying games must be complete first', 'err'); return; }
+function generatePlayoffs(divId) {
+  if (!admin()) return;
 
-  const standings = Tournament.calculateStandings(div.teams, div.qualifyingRounds);
-  div.standings   = standings;
-  div.bracket     = Tournament.generateBracket(standings);
-  div.phase       = 'playoffs';
-  saveState(); renderApp();
-  toast('Playoffs generated! Seeded by qualifying standings.', 'ok');
+  const d = STATE.divisions[divId];
+
+  if (!allQualComplete(d)) {
+    toast('Complete all qualifying games first', 'err');
+    return;
+  }
+
+  d.standings = Tournament.calculateStandings(d.teams, d.qualifyingRounds);
+  d.bracket = Tournament.generateBracket(d.standings);
+  d.phase = 'playoffs';
+
+  saveState();
+  renderApp();
+  toast('Playoffs generated', 'ok');
 }
 
-/* ── Bracket ── */
+function backQualifying(divId) {
+  if (!admin() || !confirm('Go back to qualifying? Playoff scores will be cleared.')) return;
 
-function handleSaveBracketScore(divId, gameId) {
-  const div = STATE.divisions[divId];
-  const sA = parseInt(document.getElementById(`bs-${gameId}-a`)?.value, 10);
-  const sB = parseInt(document.getElementById(`bs-${gameId}-b`)?.value, 10);
-  const err = Tournament.validateScore(sA, sB);
-  if (err) { toast(err, 'err'); return; }
+  const d = STATE.divisions[divId];
+  d.phase = 'qualifying';
+  d.bracket = null;
+  d.finalRankings = [];
 
-  const ok  = Tournament.submitBracketScore(div.bracket, gameId, sA, sB);
-  if (!ok) { toast('Could not record score for this game', 'err'); return; }
-
-  saveState(); renderApp();
-  toast('Score saved — teams advanced!', 'ok');
+  saveState();
+  renderApp();
 }
 
-function handleEditBracketScore(divId, gameId) {
-  if (!confirm('Clear this score? Downstream results will also be cleared.')) return;
-  const div = STATE.divisions[divId];
-  Tournament.resetBracketGame(div.bracket, gameId);
-  saveState(); renderApp();
-  toast('Score cleared — re-enter to continue', 'info');
+function saveBracketScore(divId, gameId) {
+  if (!canEnterScores()) return;
+
+  const d = STATE.divisions[divId];
+  const a = Number($(`bs-${gameId}-a`)?.value);
+  const b = Number($(`bs-${gameId}-b`)?.value);
+  const err = Tournament.validateScore(a, b);
+
+  if (err) {
+    toast(err, 'err');
+    return;
+  }
+
+  if (!Tournament.submitBracketScore(d.bracket, gameId, a, b)) {
+    toast('Could not save score', 'err');
+    return;
+  }
+
+  saveState();
+  renderApp();
+  toast('Score saved', 'ok');
 }
 
-function handleFinishTournament(divId) {
-  const div    = STATE.divisions[divId];
-  div.finalRankings = Tournament.getFinalRankings(div.bracket, div.teams, div.standings);
-  div.phase    = 'complete';
-  saveState(); renderApp();
-  toast('Tournament complete! 🎉', 'ok');
+function editBracketScore(divId, gameId) {
+  if (!admin() || !confirm('Clear this score? Downstream bracket results will also be cleared.')) return;
+
+  Tournament.resetBracketGame(STATE.divisions[divId].bracket, gameId);
+
+  saveState();
+  renderApp();
+  toast('Score cleared', 'info');
 }
 
-/* =========================================================
-   INIT
-   ========================================================= */
+function finishTournament(divId) {
+  if (!admin()) return;
+
+  const d = STATE.divisions[divId];
+
+  if (!Tournament.isBracketComplete(d.bracket)) {
+    toast('All playoff games must be complete first', 'err');
+    return;
+  }
+
+  d.finalRankings = Tournament.getFinalRankings(d.bracket, d.teams, d.standings);
+  d.phase = 'complete';
+
+  saveState();
+  renderApp();
+  toast('Tournament complete', 'ok');
+}
 
 document.addEventListener('DOMContentLoaded', () => {
+  initFirebase();
   loadState();
-  renderApp();
+
+  document.addEventListener('click', handleClick);
+  document.addEventListener('keydown', handleKeydown);
+  document.addEventListener('input', handleScoreDraftInput);
 });
