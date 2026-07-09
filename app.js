@@ -10,7 +10,7 @@ const STORAGE_KEY = 'vb_tournament_v2';
 const FIREBASE_PATH = 'tournament_v2';
 
 const DIVS = {
-  beginner: { id: 'beginner', name: 'Beginner 4s', icon: '🏐', players: 4 },
+  beginner: { id: 'beginner', name: 'Recreational 3s', icon: '🏐', players: 3 },
   competitive: { id: 'competitive', name: 'Competitive 2s', icon: '⚡', players: 2 },
 };
 
@@ -95,6 +95,37 @@ function esc(v) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function customConfirm({ title, message, confirmText = 'Delete', icon = '⚠️' }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-overlay';
+    overlay.innerHTML = `
+      <div class="confirm-box">
+        <div class="confirm-icon">${icon}</div>
+        <div class="confirm-title">${title}</div>
+        <div class="confirm-msg">${message}</div>
+        <div class="confirm-actions">
+          <button class="btn btn-cancel" data-role="cancel">Cancel</button>
+          <button class="btn btn-confirm-delete" data-role="confirm">${confirmText}</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('visible'));
+
+    function close(result) {
+      overlay.classList.remove('visible');
+      setTimeout(() => overlay.remove(), 250);
+      resolve(result);
+    }
+
+    overlay.querySelector('[data-role="cancel"]').addEventListener('click', () => close(false));
+    overlay.querySelector('[data-role="confirm"]').addEventListener('click', () => close(true));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+  });
 }
 
 function toast(msg, type = 'info') {
@@ -374,6 +405,10 @@ function renderEntry() {
   `;
   }
 
+  if (ENTRY_MODE === 'view-team-picker') {
+    return renderEntryViewTeamPicker();
+  }
+
   return `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;">
       <div class="logo" style="margin-bottom:32px;">
@@ -389,11 +424,60 @@ function renderEntry() {
           <button class="btn btn-primary" data-action="entry-view-team" style="padding:16px;font-size:16px;">👤 View as Team</button>
           <button class="btn btn-secondary" data-action="entry-register" style="padding:16px;font-size:16px;">📝 Register Team</button>
           <button class="btn btn-secondary" data-action="entry-free-agent" style="padding:16px;font-size:16px;">🙋 I'm a Free Agent</button>
+          <button class="btn btn-secondary" data-action="entry-browse" style="padding:16px;font-size:16px;">🔍 Browse Tournament</button>
 
           <div class="divider" style="margin:16px 0;"></div>
 
           <button class="btn btn-ghost" data-action="entry-organizer" style="padding:12px;font-size:15px;">⚙️ Organizer Access</button>
         </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderEntryViewTeamPicker() {
+  const teams = allTeams();
+  const hasTeams = teams.length > 0;
+
+  return `
+    <div class="entry-screen">
+      <div class="logo entry-logo">
+        <span class="logo-icon" style="font-size:48px;">🏐</span>
+        <span class="logo-name" style="font-size:32px;">Tournament Manager</span>
+      </div>
+
+      <div class="card entry-card" style="max-width:520px;">
+        <h2 style="margin-bottom:6px;">Select Your Team</h2>
+        <p class="card-sub" style="margin-bottom:20px;">Tap your team to view the tournament as that team.</p>
+
+        ${hasTeams
+          ? Object.keys(DIVS).map((divId) => {
+              const cfg = DIVS[divId];
+              const divTeams = STATE.divisions[divId].teams;
+              if (!divTeams.length) return '';
+              return `
+                <div class="section-title" style="margin-bottom:10px;">${cfg.icon} ${cfg.name}</div>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
+                  ${divTeams.map((t) => `
+                    <button
+                      type="button"
+                      class="btn btn-secondary team-picker-btn"
+                      data-action="pick-team-from-list"
+                      data-div="${divId}"
+                      data-team-id="${t.id}"
+                      style="justify-content:flex-start;padding:14px 18px;font-size:15px;text-align:left;"
+                    >
+                      <span style="font-size:18px;">👤</span>
+                      <span>${esc(t.name)}</span>
+                    </button>
+                  `).join('')}
+                </div>
+              `;
+            }).join('')
+          : `<div class="empty-state"><div class="empty-title">No teams yet</div><div class="empty-sub">No teams have registered yet. Check back later!</div></div>`
+        }
+
+        <button class="btn btn-ghost" data-action="entry-back" style="margin-top:8px;">← Back</button>
       </div>
     </div>
   `;
@@ -611,8 +695,8 @@ function renderTeamCard(d, t, i) {
 
           ${canManageTeam(d.id, t.id) ? `
             <button type="button" class="btn btn-ghost btn-sm" data-action="edit-team-name" data-div="${d.id}" data-team-id="${t.id}">Edit</button>
-            <button type="button" class="btn btn-danger btn-sm" data-action="delete-team" data-div="${d.id}" data-team-id="${t.id}">✕</button>
           ` : ''}
+            <button type="button" class="btn btn-danger btn-sm" data-action="delete-team" data-div="${d.id}" data-team-id="${t.id}">✕</button>
 
           <span style="color:var(--text-sub);font-size:10px;">${expanded ? '▲' : '▼'}</span>
         </div>
@@ -668,7 +752,7 @@ function renderFreeAgentsSubTab() {
         <div class="signup-field">
           <label>Preferred Format</label>
           <div class="format-check">
-            <label><input id="fa-fmt-beginner" type="checkbox"> 🏐 Beginner 4s</label>
+            <label><input id="fa-fmt-beginner" type="checkbox"> 🏐 Recreational 3s</label>
             <label><input id="fa-fmt-competitive" type="checkbox"> ⚡ Competitive 2s</label>
           </div>
         </div>
@@ -1052,7 +1136,27 @@ function handleClick(e) {
   }
 
   if (a === 'entry-register-division') return registerTeamFromEntry(divId);
-  if (a === 'entry-view-team') return teamLogin(true);
+
+  if (a === 'entry-view-team') {
+    ENTRY_MODE = 'view-team-picker';
+    renderApp();
+    return;
+  }
+
+  if (a === 'pick-team-from-list') {
+    ENTRY_MODE = 'start';
+    loginAsTeam(divId, teamId);
+    return;
+  }
+
+  if (a === 'entry-browse') {
+    HAS_ENTERED = true;
+    TEAM_PORTAL = null;
+    IS_ORGANIZER = false;
+    STATE.activePage = 'division';
+    renderApp();
+    return;
+  }
 
   if (a === 'entry-free-agent') {
     HAS_ENTERED = true;
@@ -1215,8 +1319,7 @@ function addTeam(divId, inputId) {
   toast(`Added ${name}`, 'ok');
 }
 
-function deleteTeam(divId, teamId) {
-  if (!canManageTeam(divId, teamId)) return;
+async function deleteTeam(divId, teamId) {
 
   const d = STATE.divisions[divId];
   const t = findTeam(divId, teamId);
@@ -1233,13 +1336,20 @@ function deleteTeam(divId, teamId) {
     return;
   }
 
-  let msg = `Delete "${t.name}"?`;
+  let message = `Are you sure you want to remove <strong>${esc(t.name)}</strong> from the tournament?`;
 
   if (admin() && d.phase !== 'registration') {
-    msg += '\n\nThis will reset this division back to registration so deleted teams are not kept in old games.';
+    message += '<br><br>This will reset this division back to registration so deleted teams are not kept in old games.';
   }
 
-  if (!confirm(msg)) return;
+  const confirmed = await customConfirm({
+    title: `Delete "${t.name}"?`,
+    message,
+    confirmText: 'Delete Team',
+    icon: '🗑️',
+  });
+
+  if (!confirmed) return;
 
   d.teams = d.teams.filter((x) => String(x.id) !== String(teamId));
 
