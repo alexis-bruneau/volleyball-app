@@ -128,6 +128,65 @@ function customConfirm({ title, message, confirmText = 'Delete', icon = '⚠️'
   });
 }
 
+function showPasswordModal(onSuccess) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = `
+    <div class="confirm-box pwd-box">
+      <div class="confirm-icon pwd-icon">⚙️</div>
+      <div class="confirm-title">Organizer Access</div>
+      <div class="confirm-msg">Enter the password to access organizer controls.</div>
+      <div class="pwd-input-wrap">
+        <input
+          id="pwd-modal-input"
+          type="password"
+          placeholder="Password"
+          autocomplete="current-password"
+          class="pwd-modal-input"
+        />
+        <div class="pwd-error" id="pwd-modal-error">Incorrect password. Try again.</div>
+      </div>
+      <div class="confirm-actions" style="margin-top:20px;">
+        <button class="btn btn-cancel" data-role="cancel">Cancel</button>
+        <button class="btn btn-confirm-enter" data-role="confirm">Enter ↗</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('visible'));
+
+  const input = overlay.querySelector('#pwd-modal-input');
+  const errorEl = overlay.querySelector('#pwd-modal-error');
+
+  // Auto-focus after transition
+  setTimeout(() => input.focus(), 260);
+
+  function close() {
+    overlay.classList.remove('visible');
+    setTimeout(() => overlay.remove(), 250);
+  }
+
+  function attempt() {
+    if (input.value === 'volleyball') {
+      close();
+      onSuccess();
+    } else {
+      errorEl.classList.add('visible');
+      input.classList.add('shake');
+      input.value = '';
+      setTimeout(() => input.classList.remove('shake'), 500);
+      input.focus();
+    }
+  }
+
+  overlay.querySelector('[data-role="cancel"]').addEventListener('click', close);
+  overlay.querySelector('[data-role="confirm"]').addEventListener('click', attempt);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') attempt(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
+
 function toast(msg, type = 'info') {
   const box = $('toast-container');
   if (!box) {
@@ -1105,11 +1164,13 @@ function handleClick(e) {
   }
 
   if (a === 'entry-organizer') {
-    HAS_ENTERED = true;
-    TEAM_PORTAL = null;
-    IS_ORGANIZER = true;
-    STATE.activePage = 'division';
-    renderApp();
+    showPasswordModal(function() {
+      HAS_ENTERED = true;
+      TEAM_PORTAL = null;
+      IS_ORGANIZER = true;
+      STATE.activePage = 'division';
+      renderApp();
+    });
     return;
   }
 
